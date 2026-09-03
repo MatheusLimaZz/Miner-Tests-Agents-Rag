@@ -1,0 +1,137 @@
+# ==========================================================================
+# MSR-Kit Protocol: v0 RAG & Agents Testing
+# ==========================================================================
+# Este é o arquivo de protocolo que o pesquisador edita para definir
+# o escopo da coleta. Mantenha comentários claros — este é o contrato
+# entre o pesquisador e a ferramenta.
+# ==========================================================================
+
+version: 0
+name: v0_rag_agents_testing
+description: >
+  Coleta exploratória sobre ferramentas e métodos de teste para sistemas
+  LLM com RAG e sistemas baseados em agentes.
+
+# ---- Recorte temporal (EDITAR) ----
+# Define a janela de tempo para a busca.
+# Formato: YYYY-MM-DD
+window:
+  since: "2023-01-01"
+  until: "2026-08-31"
+
+# ---- Termos de busca (EDITAR) ----
+# v0 usa termos simples e amplos, de propósito. Serão refinados depois.
+# Cada termo é buscado como frase exata ou palavras combinadas,
+# dependendo da fonte.
+terms:
+  - "RAG testing"
+  - "RAG evaluation"
+  - "test RAG"
+  - "evaluate RAG"
+  - "LLM testing"
+  - "LLM evaluation"
+  - "LLM as a judge"
+  - "agent testing"
+  - "agent evaluation"
+  - "agentic evaluation"
+  - "golden dataset"
+  - "hallucination test"
+  - "prompt regression"
+  - "eval harness"
+
+# Idiomas alvo
+languages:
+  - en
+  - pt
+
+# ---- Fontes ----
+# Cada fonte pode ser habilitada/desabilitada independentemente.
+# O campo 'extra' contém filtros específicos da fonte.
+sources:
+  github:
+    enabled: true
+    kinds:
+      - repo
+      - code
+      - issue
+    extra:
+      languages:
+        - Python
+        - TypeScript
+      min_stars: 3
+
+  stackexchange:
+    enabled: true
+    extra:
+      sites:
+        - stackoverflow
+        - softwareengineering
+        - sqa
+        - datascience
+        - ai
+      tagged:
+        - langchain
+        - llamaindex
+        - large-language-model
+        - openai-api
+        - rag
+
+  hackernews:
+    enabled: true
+
+  devto:
+    enabled: true
+    extra:
+      tags:
+        - rag
+        - llm
+        - ai
+        - agents
+        - llmops
+        - testing
+
+  reddit:
+    enabled: true
+    extra:
+      subreddits:
+        - LocalLLaMA
+        - LangChain
+        - LLMDevs
+        - AI_Agents
+        - MachineLearning
+        - softwaretesting
+        - QualityAssurance
+
+  huggingface:
+    enabled: true
+    extra:
+      kinds:
+        - models
+        - datasets
+        - spaces
+
+  rss:
+    enabled: true
+    extra:
+      feeds:
+        - "https://medium.com/feed/tag/rag"
+        - "https://medium.com/feed/tag/llm-evaluation"
+      note: "RSS entrega apenas itens recentes; sem cobertura histórica."
+
+  bluesky:
+    enabled: false  # habilitar após configurar credenciais
+
+  x_twitter:
+    enabled: false  # requer plano pago
+
+  discord:
+    enabled: false  # requer bot instalado e autorização dos admins
+
+  linkedin:
+    enabled: false  # não suportado, permanentemente
+
+# ---- Limites globais ----
+limits:
+  max_items_per_source: 5000
+  max_requests_per_source: 2000
+  stop_on_quota_exhausted: true

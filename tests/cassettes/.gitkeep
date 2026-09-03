@@ -1,0 +1,3 @@
+# Test cassettes directory
+# VCR cassettes for adapter tests go here.
+# Ensure no tokens or credentials leak into cassette files.
