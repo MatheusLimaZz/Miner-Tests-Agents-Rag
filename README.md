@@ -1,5 +1,7 @@
 # MSR-Kit
 
+[![CI](https://github.com/MatheusLimaZz/Miner-Tests-Agents-Rag/actions/workflows/ci.yml/badge.svg)](https://github.com/MatheusLimaZz/Miner-Tests-Agents-Rag/actions/workflows/ci.yml)
+
 **Mining grey literature through official APIs** for empirical software engineering research.
 
 MSR-Kit is a command-line tool that collects, normalizes, deduplicates, and exports items from multiple platforms using only official APIs and public feeds. It is designed for an academic study cataloging **testing tools and methods** used in **LLM+RAG systems** and **agent-based systems**.

@@ -116,6 +116,11 @@ sources:
       feeds:
         - "https://medium.com/feed/tag/rag"
         - "https://medium.com/feed/tag/llm-evaluation"
+        - "https://medium.com/feed/tag/ai-agents"
+        - "https://medium.com/feed/tag/llmops"
+        - "https://blog.langchain.dev/rss/"
+        - "https://towardsdatascience.com/feed"
+        - "https://arize.com/feed/"
       note: "RSS entrega apenas itens recentes; sem cobertura histórica."
 
   bluesky:

@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Lint, Test & Validate
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run Ruff linter
+        run: |
+          ruff check src/ tests/
+
+      - name: Run Pytest test suite with coverage
+        run: |
+          pytest --cov=src/msrkit --cov-report=term-missing tests/
+
+      - name: Validate sample protocol
+        run: |
+          python -m msrkit.cli validate protocols/v0_rag_agents_testing.yaml
+
+      - name: Verify collection planning (dry-run)
+        run: |
+          python -m msrkit.cli plan protocols/v0_rag_agents_testing.yaml
