@@ -18,6 +18,7 @@ import logging
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import typer
 from rich.console import Console
@@ -85,12 +86,23 @@ def _get_registry() -> dict[str, type]:
     return all_adapters()
 
 
+def _unwrap(val: object) -> Any:
+    """Unwrap Typer default parameter if called directly from Python code."""
+    from typer.models import ArgumentInfo, OptionInfo
+
+    if isinstance(val, (OptionInfo, ArgumentInfo)):
+        return val.default
+    return val
+
+
 @app.command()
 def sources(
     md: bool = typer.Option(False, "--md", help="Output in Markdown format"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
     """List all adapters with availability, credentials, and policies."""
+    md = _unwrap(md)
+    verbose = _unwrap(verbose)
     _setup_logging(verbose)
     registry = _get_registry()
 
@@ -187,6 +199,8 @@ def validate(
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
     """Validate protocol schema and check credential availability (no network)."""
+    protocol = _unwrap(protocol)
+    verbose = _unwrap(verbose)
     _setup_logging(verbose)
 
     from msrkit.config import load_protocol
@@ -234,6 +248,9 @@ def plan(
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
     """Dry run: show partitions and estimated request budget per source."""
+    protocol = _unwrap(protocol)
+    source = _unwrap(source)
+    verbose = _unwrap(verbose)
     _setup_logging(verbose)
 
     from msrkit.config import load_protocol
@@ -335,6 +352,11 @@ def run(
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
     """Execute the collection protocol."""
+    protocol = _unwrap(protocol)
+    source = _unwrap(source)
+    limit = _unwrap(limit)
+    resume = _unwrap(resume)
+    verbose = _unwrap(verbose)
     _setup_logging(verbose)
 
     from msrkit.config import load_protocol, protocol_sha256
@@ -513,6 +535,9 @@ def normalize(
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
     """Reprocess items from raw data (no network requests)."""
+    run_id = _unwrap(run_id)
+    protocol = _unwrap(protocol)
+    verbose = _unwrap(verbose)
     _setup_logging(verbose)
 
     if not run_id:
@@ -598,6 +623,9 @@ def dedupe(
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
     """Deduplicate items for a run or across all runs."""
+    run_id = _unwrap(run_id)
+    all_runs = _unwrap(all_runs)
+    verbose = _unwrap(verbose)
     _setup_logging(verbose)
 
     from msrkit.dedupe import deduplicate
@@ -652,6 +680,8 @@ def stats(
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
     """Show collection statistics for a run."""
+    run_id = _unwrap(run_id)
+    verbose = _unwrap(verbose)
     _setup_logging(verbose)
 
     if not run_id:
@@ -736,6 +766,12 @@ def export(
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
     """Export collected items."""
+    run_id = _unwrap(run_id)
+    all_runs = _unwrap(all_runs)
+    fmt = _unwrap(fmt)
+    include_body = _unwrap(include_body)
+    output = _unwrap(output)
+    verbose = _unwrap(verbose)
     _setup_logging(verbose)
 
     from msrkit.storage import ItemStorage

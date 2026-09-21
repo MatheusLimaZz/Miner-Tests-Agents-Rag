@@ -476,3 +476,16 @@ limits:
         lines = out_file.read_text(encoding="utf-8").strip().splitlines()
         # Header + 2 unique items
         assert len(lines) == 3
+
+    def test_direct_python_run_call(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Calling run(...) directly from Python unwraps Typer defaults properly."""
+        monkeypatch.setattr("msrkit.cli.DATA_DIR", tmp_path)
+        from msrkit.adapters.hackernews import HackerNewsAdapter
+        from msrkit.cli import run
+
+        def mock_search(self: HackerNewsAdapter, query: object) -> object:
+            return iter([])
+
+        monkeypatch.setattr(HackerNewsAdapter, "search", mock_search)
+        # Should execute cleanly without Manifest validation error for OptionInfo run_id
+        run(protocol="protocols/v0_rag_agents_testing.yaml", source="hackernews", limit=1)
