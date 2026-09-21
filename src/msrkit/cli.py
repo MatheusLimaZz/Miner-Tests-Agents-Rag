@@ -35,6 +35,7 @@ if sys.platform == "win32":
 app = typer.Typer(
     name="msrkit",
     help="MSR-Kit: Mining grey literature through official APIs.",
+    epilog="💡 Dica: Digite 'msrkit menu' para navegar de forma interativa com menu visual.",
     no_args_is_help=True,
 )
 console = Console()
@@ -881,18 +882,7 @@ def main(
     """MSR-Kit: Mining grey literature through official APIs."""
 
 
-def msr_entrypoint() -> None:
-    """Entrypoint for the 'msr' shortcut command.
-
-    If called without arguments, launches the interactive menu.
-    Otherwise, forwards arguments to the main MSR-Kit CLI.
-    """
-    if len(sys.argv) <= 1:
-        menu()
-    else:
-        app()
-
-
 if __name__ == "__main__":
     app()
+
 

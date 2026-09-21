@@ -22,7 +22,6 @@ dependencies = [
 
 [project.scripts]
 msrkit = "msrkit.cli:app"
-msr = "msrkit.cli:msr_entrypoint"
 
 [project.optional-dependencies]
 dev = [
