@@ -6,39 +6,66 @@
 
 MSR-Kit is a command-line tool that collects, normalizes, deduplicates, and exports items from multiple platforms using only official APIs and public feeds. It is designed for an academic study cataloging **testing tools and methods** used in **LLM+RAG systems** and **agent-based systems**.
 
-## Quick Start
+## Quick Start (Docker - 100% Isolado)
 
-### 🚀 Começando do Zero (Instalação em 1 Clique)
+O MSR-Kit roda dentro de um container Linux isolado baseado em **Ubuntu 24.04 LTS**.
+Você **não precisa** instalar Python, mexer em variáveis de ambiente (`PATH`) nem rodar scripts no seu computador host.
 
-Se você está testando o MSR-Kit em um computador novo ou não tem experiência com Python/linha de comando:
+### 1. Construir a imagem Docker (apenas na 1ª vez)
 
-- **No Windows:** Dê dois cliques em `setup.bat` (ou abra o terminal e digite `.\setup.bat`).
-- **No Linux / macOS:** Execute `./setup.sh` no terminal.
+Com o Docker Desktop ou Podman aberto, execute no terminal:
 
-O script verifica o Python, cria o ambiente virtual isolado, instala todas as dependências e **abre o menu interativo automaticamente**. Você não precisa digitar comandos complexos!
+```bash
+docker compose build
+```
+
+### 2. Abrir o Menu Interativo
+
+```bash
+docker compose run --rm msrkit
+```
+
+O menu interativo com opções numéricas (`1` a `9`) abrirá diretamente na sua tela. Todos os dados minerados e relatórios CSV são salvos automaticamente na pasta `./data` do seu computador.
+
+### 3. Ou executar comandos diretamente via Docker
+
+```bash
+# Validar o protocolo de pesquisa (sem gastar rede):
+docker compose run --rm msrkit validate protocols/v0_rag_agents_testing.yaml
+
+# Simulação prévia / Orçamento de requisições (Dry Run):
+docker compose run --rm msrkit plan protocols/v0_rag_agents_testing.yaml --source hackernews
+
+# Executar coleta rápida (ex: 10 itens do Hacker News):
+docker compose run --rm msrkit run protocols/v0_rag_agents_testing.yaml --source hackernews --limit 10
+
+# Executar coleta completa do protocolo:
+docker compose run --rm msrkit run protocols/v0_rag_agents_testing.yaml
+
+# Desduplicar itens coletados:
+docker compose run --rm msrkit dedupe
+
+# Ver estatísticas da coleta:
+docker compose run --rm msrkit stats
+
+# Exportar para planilha CSV (salva direto em data/resultados.csv):
+docker compose run --rm msrkit export -f csv -o data/resultados.csv
+```
 
 ---
 
-### Instalação Manual (Para Desenvolvedores)
+### Execução no Host sem Docker (Opcional para Desenvolvedores)
+
+Se preferir rodar nativamente com Python local:
 
 ```bash
-# 1. Crie e ative um ambiente virtual:
 python -m venv .venv
 source .venv/bin/activate    # Linux / macOS
 .venv\Scripts\activate      # Windows
-
-# 2. Instale o pacote em modo editável:
 pip install -e ".[dev]"
-# Ou com uv: uv pip install -e ".[dev]"
-```
-
-### 1. Menu Interativo (Mais Fácil)
-
-Para usar a aplicação navegando por opções visuais (sem decorar comandos):
-
-```bash
 msrkit menu
 ```
+
 
 ### 2. Configurar Credenciais (Opcional)
 

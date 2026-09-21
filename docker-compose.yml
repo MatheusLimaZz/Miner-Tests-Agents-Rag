@@ -1,0 +1,16 @@
+services:
+  msrkit:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: msrkit:ubuntu
+    container_name: msrkit
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./data:/app/data
+      - ./protocols:/app/protocols
+    env_file:
+      - path: .env
+        required: false
+    command: menu
