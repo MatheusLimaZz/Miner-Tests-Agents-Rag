@@ -437,3 +437,24 @@ limits:
         )
         assert result.exit_code == 1
         assert "not configured in protocol" in result.stdout
+
+    def test_msr_entrypoint_no_args(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """msr shortcut invokes menu when called without subcommands."""
+        from msrkit.cli import msr_entrypoint
+
+        called = []
+        monkeypatch.setattr("sys.argv", ["msr"])
+        monkeypatch.setattr("msrkit.cli.menu", lambda: called.append("menu"))
+        msr_entrypoint()
+        assert called == ["menu"]
+
+    def test_msr_entrypoint_with_args(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """msr shortcut forwards to app when subcommands are passed."""
+        from msrkit.cli import msr_entrypoint
+
+        called = []
+        monkeypatch.setattr("sys.argv", ["msr", "sources"])
+        monkeypatch.setattr("msrkit.cli.app", lambda: called.append("app"))
+        msr_entrypoint()
+        assert called == ["app"]
+

@@ -881,5 +881,18 @@ def main(
     """MSR-Kit: Mining grey literature through official APIs."""
 
 
+def msr_entrypoint() -> None:
+    """Entrypoint for the 'msr' shortcut command.
+
+    If called without arguments, launches the interactive menu.
+    Otherwise, forwards arguments to the main MSR-Kit CLI.
+    """
+    if len(sys.argv) <= 1:
+        menu()
+    else:
+        app()
+
+
 if __name__ == "__main__":
     app()
+
