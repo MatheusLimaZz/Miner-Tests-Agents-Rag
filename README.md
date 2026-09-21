@@ -51,53 +51,64 @@ Open `protocols/v0_rag_agents_testing.yaml` and customize:
 ### 4. Validate & Plan
 
 ```bash
-# Validate the protocol (no network, checks schema + credentials)
-msrkit validate protocols/v0_rag_agents_testing.yaml
+# Using the shortcut (Windows PowerShell or CMD):
+.\msr validate
+.\msr plan --source hackernews
 
-# Preview the collection plan (no data collected)
-msrkit plan protocols/v0_rag_agents_testing.yaml
+# Or using the msrkit CLI:
+msrkit validate
+msrkit plan --source hackernews
 ```
 
 ### 5. Run Collection
 
 ```bash
-# Execute the collection
-msrkit run protocols/v0_rag_agents_testing.yaml
+# Quick test: collect 5 items from a single source
+.\msr run -s hackernews -l 5
 
-# Resume an interrupted run
-msrkit run protocols/v0_rag_agents_testing.yaml --resume <run_id>
+# Full collection using the default protocol:
+.\msr run
+
+# Resume an interrupted run:
+.\msr run --resume <run_id>
 ```
 
-### 6. Post-Processing
+### 6. Post-Processing & Export
 
 ```bash
-# Reprocess from raw data (no network)
-msrkit normalize --run <run_id>
+# Deduplicate (auto-selects the latest run):
+.\msr dedupe
 
-# Deduplicate items
-msrkit dedupe --run <run_id>
+# View statistics:
+.\msr stats
 
-# View statistics
-msrkit stats --run <run_id>
+# Export to CSV / JSONL / DuckDB:
+.\msr export -f csv -o resultados.csv
+.\msr export -f jsonl
+.\msr export -f duckdb
+```
 
-# Export
-msrkit export --run <run_id> --format csv
-msrkit export --run <run_id> --format jsonl
-msrkit export --run <run_id> --format duckdb
+### 7. Interactive Terminal Menu
+
+Simply run without arguments to open the interactive wizard:
+
+```powershell
+.\msr
 ```
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
+| `msrkit menu` (or `.\msr`) | Interactive terminal menu to run commands easily |
 | `msrkit sources [--md]` | List all adapters with availability and policies |
-| `msrkit validate <protocol>` | Validate protocol schema + credentials (no network) |
-| `msrkit plan <protocol>` | Dry run: show partitions and request budget |
-| `msrkit run <protocol>` | Execute collection (retomable with `--resume`) |
-| `msrkit normalize --run <id>` | Reprocess from raw data (no network) |
-| `msrkit dedupe --run <id>` | Deduplicate items |
-| `msrkit stats --run <id>` | Show collection statistics |
-| `msrkit export --run <id>` | Export to CSV/JSONL/DuckDB |
+| `msrkit validate [protocol]` | Validate protocol schema + credentials (defaults to sample protocol) |
+| `msrkit plan [protocol] [-s source]` | Dry run: show partitions and request budget |
+| `msrkit run [protocol] [-s source] [-l limit]` | Execute collection (retomable with `--resume`) |
+| `msrkit dedupe [--run <id>]` | Deduplicate items (defaults to latest run) |
+| `msrkit stats [--run <id>]` | Show collection statistics (defaults to latest run) |
+| `msrkit export [--run <id>] [-f fmt]` | Export to CSV/JSONL/DuckDB (defaults to latest run) |
+| `msrkit normalize [--run <id>]` | Reprocess from raw data (defaults to latest run) |
 
 ## Architecture
 

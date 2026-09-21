@@ -39,8 +39,26 @@ app = typer.Typer(
 )
 console = Console()
 
-# Default data directory
+# Default data directory and protocol
 DATA_DIR = Path("data")
+DEFAULT_PROTOCOL = "protocols/v0_rag_agents_testing.yaml"
+
+
+def _get_latest_run_id() -> str | None:
+    """Find the most recent run ID in DATA_DIR/runs or DATA_DIR/items."""
+    runs_dir = DATA_DIR / "runs"
+    if runs_dir.exists():
+        subdirs = [p for p in runs_dir.iterdir() if p.is_dir()]
+        if subdirs:
+            return max(subdirs, key=lambda p: p.stat().st_mtime).name
+
+    items_dir = DATA_DIR / "items"
+    if items_dir.exists():
+        subdirs = [p for p in items_dir.iterdir() if p.is_dir()]
+        if subdirs:
+            return max(subdirs, key=lambda p: p.stat().st_mtime).name
+
+    return None
 
 
 def _setup_logging(verbose: bool = False) -> None:
@@ -159,7 +177,7 @@ def _sources_md(registry: dict[str, type]) -> None:
 
 @app.command()
 def validate(
-    protocol: str = typer.Argument(..., help="Path to protocol YAML file"),
+    protocol: str = typer.Argument(DEFAULT_PROTOCOL, help="Path to protocol YAML file"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
     """Validate protocol schema and check credential availability (no network)."""
@@ -203,7 +221,7 @@ def validate(
 
 @app.command()
 def plan(
-    protocol: str = typer.Argument(..., help="Path to protocol YAML file"),
+    protocol: str = typer.Argument(DEFAULT_PROTOCOL, help="Path to protocol YAML file"),
     source: str | None = typer.Option(
         None, "--source", "-s", help="Filter plan to a single source"
     ),
@@ -297,7 +315,7 @@ def plan(
 
 @app.command()
 def run(
-    protocol: str = typer.Argument(..., help="Path to protocol YAML file"),
+    protocol: str = typer.Argument(DEFAULT_PROTOCOL, help="Path to protocol YAML file"),
     source: str | None = typer.Option(
         None, "--source", "-s", help="Execute collection for a single source only"
     ),
@@ -479,12 +497,22 @@ def run(
 
 @app.command()
 def normalize(
-    run_id: str = typer.Option(..., "--run", help="Run ID to reprocess"),
+    run_id: str | None = typer.Option(
+        None, "--run", help="Run ID to reprocess (defaults to latest)"
+    ),
     protocol: str | None = typer.Option(None, "--protocol", "-p", help="Path to protocol YAML"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
     """Reprocess items from raw data (no network requests)."""
     _setup_logging(verbose)
+
+    if not run_id:
+        run_id = _get_latest_run_id()
+        if not run_id:
+            console.print("[red]✗ No runs found in data directory.[/red]")
+            raise typer.Exit(1)
+        console.print(f"[dim]Auto-selected latest run:[/dim] [cyan]{run_id}[/cyan]")
+
     console.print(f"[bold]Normalizing run:[/bold] {run_id}")
 
     from msrkit.provenance import load_manifest
@@ -554,11 +582,21 @@ def normalize(
 
 @app.command(name="dedupe")
 def dedupe(
-    run_id: str = typer.Option(..., "--run", help="Run ID to deduplicate"),
+    run_id: str | None = typer.Option(
+        None, "--run", help="Run ID to deduplicate (defaults to latest)"
+    ),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
     """Deduplicate items for a run."""
     _setup_logging(verbose)
+
+    if not run_id:
+        run_id = _get_latest_run_id()
+        if not run_id:
+            console.print("[red]✗ No runs found in data directory.[/red]")
+            raise typer.Exit(1)
+        console.print(f"[dim]Auto-selected latest run:[/dim] [cyan]{run_id}[/cyan]")
+
     console.print(f"[bold]Deduplicating run:[/bold] {run_id}")
 
     from msrkit.dedupe import deduplicate
@@ -589,11 +627,18 @@ def dedupe(
 
 @app.command()
 def stats(
-    run_id: str = typer.Option(..., "--run", help="Run ID"),
+    run_id: str | None = typer.Option(None, "--run", help="Run ID (defaults to latest)"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
     """Show collection statistics for a run."""
     _setup_logging(verbose)
+
+    if not run_id:
+        run_id = _get_latest_run_id()
+        if not run_id:
+            console.print("[red]✗ No runs found in data directory.[/red]")
+            raise typer.Exit(1)
+        console.print(f"[dim]Auto-selected latest run:[/dim] [cyan]{run_id}[/cyan]")
 
     from msrkit.provenance import load_manifest
     from msrkit.storage import ItemStorage
@@ -660,14 +705,21 @@ def stats(
 
 @app.command()
 def export(
-    run_id: str = typer.Option(..., "--run", help="Run ID"),
-    fmt: str = typer.Option("jsonl", "--format", help="Output format: csv, jsonl, duckdb"),
+    run_id: str | None = typer.Option(None, "--run", help="Run ID (defaults to latest)"),
+    fmt: str = typer.Option("jsonl", "--format", "-f", help="Output format: csv, jsonl, duckdb"),
     include_body: bool = typer.Option(False, "--include-body", help="Include body text in export"),
     output: str | None = typer.Option(None, "--output", "-o", help="Output file path"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
     """Export collected items."""
     _setup_logging(verbose)
+
+    if not run_id:
+        run_id = _get_latest_run_id()
+        if not run_id:
+            console.print("[red]✗ No runs found in data directory.[/red]")
+            raise typer.Exit(1)
+        console.print(f"[dim]Auto-selected latest run:[/dim] [cyan]{run_id}[/cyan]")
 
     from msrkit.storage import ItemStorage
 
@@ -735,6 +787,68 @@ def export(
         raise typer.Exit(1)
 
     console.print(f"[green]✓ Exported {len(items)} items to {out_path}[/green]")
+
+
+@app.command(name="menu")
+def menu() -> None:
+    """Interactive terminal menu to navigate MSR-Kit easily."""
+    from rich.panel import Panel
+    from rich.prompt import Prompt
+
+    while True:
+        console.print()
+        console.print(
+            Panel.fit(
+                f"[bold cyan]MSR-Kit[/bold cyan] [dim]v{__version__}[/dim]\n"
+                "[italic]Mining grey literature through official APIs[/italic]",
+                border_style="cyan",
+            )
+        )
+        console.print("\n[bold]Escolha uma ação:[/bold]")
+        console.print("  [cyan]1[/cyan] - Status das fontes e APIs ([dim]sources[/dim])")
+        console.print("  [cyan]2[/cyan] - Coleta rápida no Hacker News (5 itens)")
+        console.print("  [cyan]3[/cyan] - Coleta rápida no dev.to (5 itens)")
+        console.print("  [cyan]4[/cyan] - Coleta rápida nos feeds RSS de IA (5 itens)")
+        console.print("  [cyan]5[/cyan] - Simulação de planejamento / Dry-Run ([dim]plan[/dim])")
+        console.print("  [cyan]6[/cyan] - Desduplicar última coleta ([dim]dedupe[/dim])")
+        console.print("  [cyan]7[/cyan] - Exportar última coleta em CSV ([dim]export -f csv[/dim])")
+        console.print("  [cyan]8[/cyan] - Estatísticas da última coleta ([dim]stats[/dim])")
+        console.print("  [cyan]9[/cyan] - Validar arquivo de protocolo ([dim]validate[/dim])")
+        console.print("  [cyan]0[/cyan] - Sair")
+
+        choice = Prompt.ask("\n[bold green]Digite o número da opção[/bold green]", default="0")
+
+        if choice == "0":
+            console.print("[dim]Encerrado.[/dim]")
+            break
+        if choice == "1":
+            sources(md=False, verbose=False)
+        elif choice == "2":
+            run(protocol=DEFAULT_PROTOCOL, source="hackernews", limit=5)
+        elif choice == "3":
+            run(protocol=DEFAULT_PROTOCOL, source="devto", limit=5)
+        elif choice == "4":
+            run(protocol=DEFAULT_PROTOCOL, source="rss", limit=5)
+        elif choice == "5":
+            plan(protocol=DEFAULT_PROTOCOL, source=None, verbose=False)
+        elif choice == "6":
+            dedupe(run_id=None, verbose=False)
+        elif choice == "7":
+            export(
+                run_id=None,
+                fmt="csv",
+                include_body=False,
+                output="resultados.csv",
+                verbose=False,
+            )
+        elif choice == "8":
+            stats(run_id=None, verbose=False)
+        elif choice == "9":
+            validate(protocol=DEFAULT_PROTOCOL, verbose=False)
+        else:
+            console.print("[red]Opção inválida![/red]")
+
+        Prompt.ask("\n[dim]Pressione Enter para continuar...[/dim]")
 
 
 def _version_callback(value: bool) -> None:
