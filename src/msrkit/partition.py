@@ -8,10 +8,13 @@ max_results_per_query limit.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
 from datetime import date, timedelta
+from typing import TYPE_CHECKING
 
-from msrkit.models import Query
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from msrkit.models import Query
 
 logger = logging.getLogger(__name__)
 

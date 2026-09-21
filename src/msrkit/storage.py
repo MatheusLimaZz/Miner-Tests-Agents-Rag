@@ -9,8 +9,12 @@ from __future__ import annotations
 
 import gzip
 import hashlib
+import json
 import logging
-from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 from msrkit.models import Item, RawItem
 
@@ -47,7 +51,6 @@ class RawStorage:
         file_path = raw_dir / f"{partition_hash}.jsonl.gz"
 
         line = raw_item.model_dump_json() + "\n"
-        line_bytes = line.encode("utf-8")
 
         # Count existing lines for offset
         offset = 0
@@ -211,11 +214,12 @@ class DuckDBStorage:
             )
         """)
 
-    def ingest_items(self, items: list[Item]) -> int:
+    def ingest_items(self, items: list[Item], include_body: bool = False) -> int:
         """Insert items into DuckDB, skipping duplicates.
 
         Args:
             items: List of normalized Item instances.
+            include_body: Whether to include body text in DuckDB.
 
         Returns:
             Number of items inserted.
@@ -224,7 +228,12 @@ class DuckDBStorage:
         inserted = 0
         for item in items:
             try:
-                data = item.model_dump_json()
+                data = item.model_dump(mode="json")
+                if not include_body:
+                    data.pop("body", None)
+                data_json = json.dumps(data, ensure_ascii=False)
+                body_val = item.body if include_body else None
+
                 con.execute(  # type: ignore[union-attr]
                     """INSERT OR IGNORE INTO items
                     (id, source, kind, url, title, body, body_hash,
@@ -237,7 +246,7 @@ class DuckDBStorage:
                         item.kind.value,
                         str(item.url),
                         item.title,
-                        item.body,
+                        body_val,
                         item.body_hash,
                         item.author_handle,
                         item.created_at.isoformat() if item.created_at else None,
@@ -246,7 +255,7 @@ class DuckDBStorage:
                         item.provenance.adapter,
                         item.provenance.query_string,
                         item.provenance.fetched_at.isoformat(),
-                        data,
+                        data_json,
                     ],
                 )
                 inserted += 1

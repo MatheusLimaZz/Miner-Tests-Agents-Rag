@@ -14,8 +14,10 @@ section 2.2 of the specification.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 from msrkit.adapters.base import BaseAdapter
 from msrkit.models import (
@@ -82,7 +84,7 @@ class LinkedInAdapter(BaseAdapter):
             "and specification §2.2.",
         )
 
-    def normalize(self, raw: RawItem) -> Item:
+    def normalize(self, raw: RawItem, terms: list[str] | None = None) -> Item:
         raise SourceUnsupportedError(
             self.name,
             "LinkedIn is permanently unsupported.",

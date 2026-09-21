@@ -12,9 +12,11 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
-from msrkit.models import Item
+if TYPE_CHECKING:
+    from msrkit.models import Item
 
 logger = logging.getLogger(__name__)
 

@@ -11,9 +11,11 @@ Endpoints:
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
 from datetime import UTC, datetime
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 from msrkit.adapters.base import BaseAdapter
 from msrkit.keywords import match_terms
@@ -71,52 +73,78 @@ class HackerNewsAdapter(BaseAdapter):
 
     def estimate(self, q: Query) -> int | None:
         """Estimate results using the nbHits field."""
-        params = self._build_params(q, page=0, hits_per_page=1)
-        resp = self._governed_get(f"{_BASE_URL}/search", params=params)
-        if resp.status_code != 200:
-            return None
-        data = resp.json()
-        return data.get("nbHits")
+        if not q.terms:
+            params = self._build_params(q, page=0, hits_per_page=1)
+            resp = self._governed_get(f"{_BASE_URL}/search", params=params)
+            if resp.status_code != 200:
+                return None
+            return resp.json().get("nbHits")
+
+        total = 0
+        for term in q.terms:
+            params = self._build_params(q, term=term, page=0, hits_per_page=1)
+            resp = self._governed_get(f"{_BASE_URL}/search", params=params)
+            if resp.status_code != 200:
+                return None
+            total += resp.json().get("nbHits", 0)
+        return total
 
     def search(self, q: Query) -> Iterator[RawItem]:
         """Search HN via Algolia, paginating through all results."""
-        page = 0
-        hits_per_page = min(self.policy.max_page_size, 1000)
-        total_yielded = 0
         limit = q.limit or 5000
+        total_yielded = 0
+        seen_ids: set[str] = set()
 
-        while True:
-            params = self._build_params(q, page=page, hits_per_page=hits_per_page)
-            resp = self._governed_get(f"{_BASE_URL}/search", params=params)
+        terms: list[str | None] = list(q.terms) if q.terms else [None]
+        for term in terms:
+            page = 0
+            hits_per_page = min(self.policy.max_page_size, 1000)
 
-            if resp.status_code != 200:
-                logger.warning(
-                    "HN search returned %d for page %d", resp.status_code, page
-                )
-                break
-
-            data = resp.json()
-            hits = data.get("hits", [])
-            if not hits:
-                break
-
-            for hit in hits:
+            while True:
                 if total_yielded >= limit:
                     return
-                yield self._make_raw_item(
-                    source=self.name,
-                    native_id=str(hit.get("objectID", "")),
-                    payload=hit,
+
+                params = self._build_params(
+                    q, term=term, page=page, hits_per_page=hits_per_page
                 )
-                total_yielded += 1
+                resp = self._governed_get(f"{_BASE_URL}/search", params=params)
 
-            # Check if there are more pages
-            nb_pages = data.get("nbPages", 0)
-            page += 1
-            if page >= nb_pages:
-                break
+                if resp.status_code != 200:
+                    logger.warning(
+                        "HN search returned %d for term '%s' page %d",
+                        resp.status_code,
+                        term,
+                        page,
+                    )
+                    break
 
-    def normalize(self, raw: RawItem) -> Item:
+                data = resp.json()
+                hits = data.get("hits", [])
+                if not hits:
+                    break
+
+                for hit in hits:
+                    oid = str(hit.get("objectID", ""))
+                    if oid in seen_ids:
+                        continue
+                    seen_ids.add(oid)
+
+                    if total_yielded >= limit:
+                        return
+                    yield self._make_raw_item(
+                        source=self.name,
+                        native_id=oid,
+                        payload=hit,
+                    )
+                    total_yielded += 1
+
+                # Check if there are more pages
+                nb_pages = data.get("nbPages", 0)
+                page += 1
+                if page >= nb_pages:
+                    break
+
+    def normalize(self, raw: RawItem, terms: list[str] | None = None) -> Item:
         """Convert HN Algolia hit to canonical Item."""
         p = raw.payload
         tags = p.get("_tags", [])
@@ -133,9 +161,7 @@ class HackerNewsAdapter(BaseAdapter):
         if created_at_i:
             created_at = datetime.fromtimestamp(created_at_i, tz=UTC)
 
-        # Match terms
-        terms: list[str] = []  # Will be populated by the caller
-        matched = match_terms(terms, title=title, body=body)
+        matched = match_terms(terms or [], title=title, body=body)
 
         return Item(
             id=Item.make_id(self.name, str(p.get("objectID", ""))),
@@ -165,11 +191,18 @@ class HackerNewsAdapter(BaseAdapter):
         )
 
     def _build_params(
-        self, q: Query, page: int, hits_per_page: int
+        self,
+        q: Query,
+        page: int = 0,
+        hits_per_page: int = 1000,
+        term: str | None = None,
     ) -> dict[str, Any]:
-        """Build Algolia search parameters."""
+        query_str = (
+            term if term is not None else (" OR ".join(q.terms) if q.terms else "")
+        )
+
         params: dict[str, Any] = {
-            "query": " OR ".join(q.terms) if q.terms else "",
+            "query": query_str,
             "page": page,
             "hitsPerPage": hits_per_page,
             "tags": "story",  # Default to stories

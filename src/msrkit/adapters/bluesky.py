@@ -10,10 +10,13 @@ Endpoints:
 
 from __future__ import annotations
 
+import contextlib
 import logging
-from collections.abc import Iterator
 from datetime import datetime
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 import httpx
 
@@ -114,10 +117,9 @@ class BlueskyAdapter(BaseAdapter):
 
     def search(self, q: Query) -> Iterator[RawItem]:
         """Search Bluesky posts."""
-        if not self._session_token:
-            if not self._create_session():
-                logger.warning("Bluesky: cannot authenticate, skipping")
-                return
+        if not self._session_token and not self._create_session():
+            logger.warning("Bluesky: cannot authenticate, skipping")
+            return
 
         limit = q.limit or 5000
         total_yielded = 0
@@ -170,19 +172,17 @@ class BlueskyAdapter(BaseAdapter):
             if not cursor:
                 break
 
-    def normalize(self, raw: RawItem) -> Item:
+    def normalize(self, raw: RawItem, terms: list[str] | None = None) -> Item:
         """Convert Bluesky post to canonical Item."""
         p = raw.payload
         record = p.get("record", {})
 
         created_at = None
         if record.get("createdAt"):
-            try:
+            with contextlib.suppress(ValueError, TypeError):
                 created_at = datetime.fromisoformat(
                     record["createdAt"].replace("Z", "+00:00")
                 )
-            except (ValueError, TypeError):
-                pass
 
         author = p.get("author", {})
         handle = author.get("handle", "")
@@ -194,7 +194,7 @@ class BlueskyAdapter(BaseAdapter):
         # at://did:plc:xxx/app.bsky.feed.post/yyy → https://bsky.app/profile/handle/post/yyy
         url = f"https://bsky.app/profile/{handle}/post/{uri.split('/')[-1]}" if uri else ""
 
-        matched = match_terms([], title=None, body=text)
+        matched = match_terms(terms or [], title=None, body=text)
 
         return Item(
             id=Item.make_id(self.name, uri),

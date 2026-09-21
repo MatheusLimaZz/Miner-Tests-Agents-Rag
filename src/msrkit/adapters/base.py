@@ -15,9 +15,8 @@ import hashlib
 import logging
 import os
 from abc import ABC, abstractmethod
-from collections.abc import Iterator
 from datetime import UTC, datetime
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import httpx
 from tenacity import (
@@ -27,7 +26,11 @@ from tenacity import (
     wait_exponential_jitter,
 )
 
-from msrkit.governor import Governor
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    from msrkit.governor import Governor
+
 from msrkit.models import (
     Availability,
     Item,

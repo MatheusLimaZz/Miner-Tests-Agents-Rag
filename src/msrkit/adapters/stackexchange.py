@@ -11,9 +11,11 @@ Endpoint:
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
 from datetime import UTC, datetime
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 import httpx
 
@@ -164,7 +166,7 @@ class StackExchangeAdapter(BaseAdapter):
                     break
                 page += 1
 
-    def normalize(self, raw: RawItem) -> Item:
+    def normalize(self, raw: RawItem, terms: list[str] | None = None) -> Item:
         """Convert SE question to canonical Item."""
         p = raw.payload
         site = p.get("_site", "stackoverflow")
@@ -183,7 +185,7 @@ class StackExchangeAdapter(BaseAdapter):
         url = p.get("link", f"https://{site}.com/q/{p.get('question_id', '')}")
 
         matched = match_terms(
-            [], title=p.get("title"), body=p.get("body"), tags=tags
+            terms or [], title=p.get("title"), body=p.get("body"), tags=tags
         )
 
         return Item(

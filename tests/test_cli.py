@@ -1,0 +1,439 @@
+"""Tests for MSR-Kit CLI commands."""
+
+from __future__ import annotations
+
+import json
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
+
+import pytest
+from typer.testing import CliRunner
+
+from msrkit.cli import app
+from msrkit.models import (
+    Availability,
+    AvailabilityStatus,
+    Item,
+    ItemKind,
+    Manifest,
+    Provenance,
+    RawItem,
+    SourceManifestEntry,
+)
+from msrkit.provenance import save_manifest
+from msrkit.storage import ItemStorage, RawStorage
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+runner = CliRunner()
+
+
+@pytest.fixture
+def sample_items() -> list[Item]:
+    """Create sample items for CLI testing."""
+    item1 = Item(
+        id=Item.make_id("github", "101"),
+        source="github",
+        kind=ItemKind.REPO,
+        url="https://github.com/org/rag-testing",  # type: ignore[arg-type]
+        title="rag-testing framework",
+        body="A comprehensive tool for RAG testing and LLM evaluation.",
+        author_handle="testuser",
+        created_at=datetime(2024, 1, 15, tzinfo=UTC),
+        provenance=Provenance(
+            run_id="test-run-cli",
+            query_string="RAG testing",
+            partition="q1",
+            adapter="github",
+            adapter_version="0.1.0",
+            fetched_at=datetime(2024, 6, 1, tzinfo=UTC),
+            response_sha256="hash1",
+            raw_ref="data/raw/github/test-run-cli/part1.jsonl.gz:0",
+        ),
+    )
+    # Duplicate of item1 (same URL)
+    item2 = Item(
+        id=Item.make_id("github", "102"),
+        source="github",
+        kind=ItemKind.REPO,
+        url="https://github.com/org/rag-testing?utm_source=twitter",  # type: ignore[arg-type]
+        title="rag-testing framework",
+        body="A comprehensive tool for RAG testing and LLM evaluation.",
+        author_handle="testuser",
+        created_at=datetime(2024, 1, 15, tzinfo=UTC),
+        provenance=Provenance(
+            run_id="test-run-cli",
+            query_string="RAG testing",
+            partition="q2",
+            adapter="github",
+            adapter_version="0.1.0",
+            fetched_at=datetime(2024, 6, 1, tzinfo=UTC),
+            response_sha256="hash2",
+            raw_ref="data/raw/github/test-run-cli/part2.jsonl.gz:0",
+        ),
+    )
+    # StackExchange item (full_text_with_attribution)
+    item3 = Item(
+        id=Item.make_id("stackexchange", "201"),
+        source="stackexchange",
+        kind=ItemKind.THREAD,
+        url="https://stackoverflow.com/q/201",  # type: ignore[arg-type]
+        title="How to test RAG pipelines effectively?",
+        body="What evaluation metrics and golden datasets are recommended?",
+        author_handle="stackuser",
+        created_at=datetime(2024, 2, 1, tzinfo=UTC),
+        provenance=Provenance(
+            run_id="test-run-cli",
+            query_string="RAG testing",
+            partition="q1",
+            adapter="stackexchange",
+            adapter_version="0.1.0",
+            fetched_at=datetime(2024, 6, 1, tzinfo=UTC),
+            response_sha256="hash3",
+            raw_ref="data/raw/stackexchange/test-run-cli/part1.jsonl.gz:0",
+        ),
+    )
+    return [item1, item2, item3]
+
+
+class TestCliCommands:
+    """Test suite for CLI command execution."""
+
+    def test_sources_table_output(self) -> None:
+        """msrkit sources outputs table with registered adapters."""
+        result = runner.invoke(app, ["sources"])
+        assert result.exit_code == 0
+        assert "MSR-Kit Sources" in result.stdout
+        assert "github" in result.stdout
+        assert "linkedin" in result.stdout
+
+    def test_sources_markdown_output(self) -> None:
+        """msrkit sources --md outputs markdown documentation."""
+        result = runner.invoke(app, ["sources", "--md"])
+        assert result.exit_code == 0
+        assert "# MSR-Kit Sources" in result.stdout
+        assert "## github" in result.stdout
+        assert "## linkedin" in result.stdout
+
+    def test_validate_valid_protocol(self) -> None:
+        """msrkit validate succeeds on standard protocol."""
+        result = runner.invoke(app, ["validate", "protocols/v0_rag_agents_testing.yaml"])
+        assert result.exit_code == 0
+        assert "Protocol 'v0_rag_agents_testing' v0 is valid" in result.stdout
+
+    def test_validate_nonexistent_protocol(self) -> None:
+        """msrkit validate fails on missing file."""
+        result = runner.invoke(app, ["validate", "protocols/nonexistent.yaml"])
+        assert result.exit_code != 0
+
+    def test_plan_dry_run(self) -> None:
+        """msrkit plan displays dry-run estimates without network calls."""
+        result = runner.invoke(app, ["plan", "protocols/v0_rag_agents_testing.yaml"])
+        assert result.exit_code == 0
+        assert "Collection Plan (Dry Run)" in result.stdout
+        assert "Total estimated requests:" in result.stdout
+
+    def test_plan_with_source(self) -> None:
+        """msrkit plan --source filters to single source."""
+        result = runner.invoke(
+            app, ["plan", "protocols/v0_rag_agents_testing.yaml", "--source", "hackernews"]
+        )
+        assert result.exit_code == 0
+        assert "hackernews" in result.stdout
+        assert "github" not in result.stdout
+
+    def test_plan_with_invalid_source(self) -> None:
+        """msrkit plan --source fails on unconfigured source."""
+        result = runner.invoke(
+            app, ["plan", "protocols/v0_rag_agents_testing.yaml", "--source", "nonexistent"]
+        )
+        assert result.exit_code == 1
+        assert "not configured in protocol" in result.stdout
+
+    def test_dedupe_command_registered_and_executes(
+        self, tmp_path: Path, sample_items: list[Item], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """msrkit dedupe deduplicates items and saves items_deduped.jsonl."""
+        monkeypatch.setattr("msrkit.cli.DATA_DIR", tmp_path)
+        storage = ItemStorage(tmp_path)
+        storage.save_items(sample_items, "run-dedupe-test")
+
+        result = runner.invoke(app, ["dedupe", "--run", "run-dedupe-test"])
+        assert result.exit_code == 0
+        assert "Input: 3" in result.stdout
+        assert "Unique: 2" in result.stdout
+        assert "Duplicates removed: 1" in result.stdout
+
+        deduped_file = tmp_path / "items" / "run-dedupe-test" / "items_deduped.jsonl"
+        assert deduped_file.exists()
+
+    def test_export_refuses_body_for_metadata_only_source(
+        self, tmp_path: Path, sample_items: list[Item], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """msrkit export --include-body rejects export when metadata_only sources exist."""
+        monkeypatch.setattr("msrkit.cli.DATA_DIR", tmp_path)
+        storage = ItemStorage(tmp_path)
+        storage.save_items(sample_items, "run-export-test")
+
+        result = runner.invoke(
+            app, ["export", "--run", "run-export-test", "--include-body"]
+        )
+        assert result.exit_code == 1
+        assert "Cannot export body" in result.stdout
+        assert "metadata_only" in result.stdout
+
+    def test_export_without_body_jsonl(
+        self, tmp_path: Path, sample_items: list[Item], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """msrkit export creates JSONL with body omitted by default."""
+        monkeypatch.setattr("msrkit.cli.DATA_DIR", tmp_path)
+        storage = ItemStorage(tmp_path)
+        storage.save_items(sample_items, "run-export-jsonl")
+
+        out_file = tmp_path / "test_export.jsonl"
+        result = runner.invoke(
+            app, ["export", "--run", "run-export-jsonl", "--format", "jsonl", "-o", str(out_file)]
+        )
+        assert result.exit_code == 0
+        assert out_file.exists()
+
+        lines = out_file.read_text(encoding="utf-8").strip().split("\n")
+        assert len(lines) == 3
+        first_item = json.loads(lines[0])
+        assert "body" not in first_item
+
+    def test_export_without_body_csv(
+        self, tmp_path: Path, sample_items: list[Item], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """msrkit export creates CSV without body column by default."""
+        monkeypatch.setattr("msrkit.cli.DATA_DIR", tmp_path)
+        storage = ItemStorage(tmp_path)
+        storage.save_items(sample_items, "run-export-csv")
+
+        out_file = tmp_path / "test_export.csv"
+        result = runner.invoke(
+            app, ["export", "--run", "run-export-csv", "--format", "csv", "-o", str(out_file)]
+        )
+        assert result.exit_code == 0
+        assert out_file.exists()
+
+        content = out_file.read_text(encoding="utf-8")
+        header = content.splitlines()[0]
+        assert "body" not in header.split(",")
+
+    def test_export_duckdb(
+        self, tmp_path: Path, sample_items: list[Item], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """msrkit export creates duckdb database without body by default."""
+        monkeypatch.setattr("msrkit.cli.DATA_DIR", tmp_path)
+        storage = ItemStorage(tmp_path)
+        storage.save_items(sample_items, "run-export-duckdb")
+
+        out_file = tmp_path / "test_export.duckdb"
+        result = runner.invoke(
+            app, ["export", "--run", "run-export-duckdb", "--format", "duckdb", "-o", str(out_file)]
+        )
+        assert result.exit_code == 0
+        assert out_file.exists()
+
+    def test_normalize_with_protocol_terms(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """msrkit normalize reprocesses raw items and performs term matching."""
+        monkeypatch.setattr("msrkit.cli.DATA_DIR", tmp_path)
+
+        run_id = "test-normalize-terms"
+        raw_storage = RawStorage(tmp_path)
+
+        # Save a raw Hackernews item
+        raw = RawItem(
+            source="hackernews",
+            native_id="999",
+            payload={
+                "objectID": "999",
+                "title": "A new tool for RAG testing and evaluation",
+                "url": "https://news.ycombinator.com/item?id=999",
+                "author": "hn_author",
+                "created_at_i": 1700000000,
+                "_tags": ["story"],
+            },
+            fetched_at=datetime(2024, 6, 1, tzinfo=UTC),
+        )
+        raw_storage.save_raw(raw, run_id, "part1")
+
+        # Save manifest
+        manifest = Manifest(
+            run_id=run_id,
+            msrkit_version="0.1.0",
+            protocol_path="protocols/v0_rag_agents_testing.yaml",
+            protocol_sha256="abc",
+            started_at=datetime.now(UTC),
+            sources=[
+                SourceManifestEntry(
+                    name="hackernews",
+                    adapter_version="0.1.0",
+                    availability=Availability(status=AvailabilityStatus.OK, reason="OK"),
+                )
+            ],
+        )
+        save_manifest(manifest, tmp_path)
+
+        # Run normalize
+        result = runner.invoke(app, ["normalize", "--run", run_id])
+        assert result.exit_code == 0
+
+        # Read back normalized item
+        item_storage = ItemStorage(tmp_path)
+        items = item_storage.read_items(run_id)
+        assert len(items) == 1
+        assert len(items[0].matched_terms) > 0
+        matched_term_names = [t.term for t in items[0].matched_terms]
+        assert "RAG testing" in matched_term_names
+
+    def test_stats_command(
+        self, tmp_path: Path, sample_items: list[Item], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """msrkit stats displays run statistics."""
+        monkeypatch.setattr("msrkit.cli.DATA_DIR", tmp_path)
+        run_id = "test-stats-run"
+
+        manifest = Manifest(
+            run_id=run_id,
+            msrkit_version="0.1.0",
+            protocol_path="protocols/v0_rag_agents_testing.yaml",
+            protocol_sha256="abc",
+            started_at=datetime.now(UTC),
+            sources=[
+                SourceManifestEntry(
+                    name="github",
+                    adapter_version="0.1.0",
+                    availability=Availability(status=AvailabilityStatus.OK, reason="OK"),
+                )
+            ],
+        )
+        save_manifest(manifest, tmp_path)
+        storage = ItemStorage(tmp_path)
+        storage.save_items(sample_items, run_id)
+
+        result = runner.invoke(app, ["stats", "--run", run_id])
+        assert result.exit_code == 0
+        assert f"Run Statistics: {run_id}" in result.stdout
+        assert "Total items:" in result.stdout
+
+    def test_version_flag(self) -> None:
+        """msrkit --version outputs version."""
+        result = runner.invoke(app, ["--version"])
+        assert result.exit_code == 0
+        assert "msrkit" in result.stdout
+
+    def test_run_command_success(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """msrkit run executes collection and creates manifest + raw + items."""
+        monkeypatch.setattr("msrkit.cli.DATA_DIR", tmp_path)
+
+        proto_file = tmp_path / "test_proto.yaml"
+        proto_file.write_text(
+            """
+version: 0
+name: test_run
+description: "Test run protocol"
+window:
+  since: "2024-01-01"
+  until: "2024-01-31"
+terms:
+  - "RAG testing"
+languages: [en]
+sources:
+  hackernews:
+    enabled: true
+limits:
+  max_items_per_source: 10
+  max_requests_per_source: 5
+""",
+            encoding="utf-8",
+        )
+
+        from msrkit.adapters.hackernews import HackerNewsAdapter
+
+        def mock_search(self: HackerNewsAdapter, query: object) -> object:
+            yield RawItem(
+                source="hackernews",
+                native_id="hn-run-1",
+                payload={
+                    "objectID": "hn-run-1",
+                    "title": "A guide to RAG testing and validation",
+                    "url": "https://news.ycombinator.com/item?id=123",
+                    "created_at_i": 1705000000,
+                    "_tags": ["story"],
+                },
+                fetched_at=datetime.now(UTC),
+            )
+
+        monkeypatch.setattr(HackerNewsAdapter, "search", mock_search)
+
+        result = runner.invoke(app, ["run", str(proto_file)])
+        assert result.exit_code == 0
+        assert "Run complete" in result.stdout
+
+        runs = [p.name for p in (tmp_path / "runs").iterdir() if p.is_dir()]
+        assert len(runs) == 1
+        run_id = runs[0]
+
+        raw_storage = RawStorage(tmp_path)
+        partitions = raw_storage.list_partitions("hackernews", run_id)
+        assert len(partitions) == 1
+
+        item_storage = ItemStorage(tmp_path)
+        items = item_storage.read_items(run_id)
+        assert len(items) == 1
+        assert items[0].title == "A guide to RAG testing and validation"
+        assert len(items[0].matched_terms) >= 1
+
+    def test_run_with_source_and_limit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """msrkit run --source --limit executes collection for single source."""
+        monkeypatch.setattr("msrkit.cli.DATA_DIR", tmp_path)
+        from msrkit.adapters.hackernews import HackerNewsAdapter
+
+        def mock_search(self: HackerNewsAdapter, query: object) -> object:
+            for idx in range(5):
+                yield RawItem(
+                    source="hackernews",
+                    native_id=f"hn-limit-{idx}",
+                    payload={
+                        "objectID": f"hn-limit-{idx}",
+                        "title": f"RAG item {idx}",
+                        "created_at_i": 1705000000,
+                        "_tags": ["story"],
+                    },
+                    fetched_at=datetime.now(UTC),
+                )
+
+        monkeypatch.setattr(HackerNewsAdapter, "search", mock_search)
+
+        result = runner.invoke(
+            app,
+            [
+                "run",
+                "protocols/v0_rag_agents_testing.yaml",
+                "--source",
+                "hackernews",
+                "--limit",
+                "2",
+            ],
+        )
+        assert result.exit_code == 0
+        assert "Source: hackernews" in result.stdout
+        assert "Collected: 2 items" in result.stdout
+
+    def test_run_with_invalid_source(self) -> None:
+        """msrkit run --source fails when source is not in protocol."""
+        result = runner.invoke(
+            app,
+            ["run", "protocols/v0_rag_agents_testing.yaml", "--source", "nonexistent"],
+        )
+        assert result.exit_code == 1
+        assert "not configured in protocol" in result.stdout

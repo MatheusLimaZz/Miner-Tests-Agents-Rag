@@ -11,10 +11,13 @@ Endpoints:
 
 from __future__ import annotations
 
+import contextlib
 import logging
-from collections.abc import Iterator
 from datetime import datetime
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 from msrkit.adapters.base import BaseAdapter
 from msrkit.keywords import match_terms
@@ -118,6 +121,11 @@ class DevToAdapter(BaseAdapter):
                 for article in articles:
                     if total_yielded >= limit:
                         return
+                    if q.terms:
+                        art_title = article.get("title") or ""
+                        art_desc = article.get("description") or ""
+                        if not match_terms(q.terms, title=art_title, body=art_desc):
+                            continue
                     yield self._make_raw_item(
                         source=self.name,
                         native_id=str(article.get("id", "")),
@@ -130,24 +138,24 @@ class DevToAdapter(BaseAdapter):
                     break
                 page += 1
 
-    def normalize(self, raw: RawItem) -> Item:
+    def normalize(self, raw: RawItem, terms: list[str] | None = None) -> Item:
         """Convert dev.to article to canonical Item."""
         p = raw.payload
 
         created_at = None
         if p.get("published_at"):
-            try:
+            with contextlib.suppress(ValueError, TypeError):
                 created_at = datetime.fromisoformat(
                     p["published_at"].replace("Z", "+00:00")
                 )
-            except (ValueError, TypeError):
-                pass
 
         tags = p.get("tag_list", [])
         if isinstance(tags, str):
             tags = [t.strip() for t in tags.split(",")]
 
-        matched = match_terms([], title=p.get("title"), body=p.get("description"))
+        matched = match_terms(
+            terms or [], title=p.get("title"), body=p.get("description"), tags=tags
+        )
 
         return Item(
             id=Item.make_id(self.name, str(p.get("id", ""))),

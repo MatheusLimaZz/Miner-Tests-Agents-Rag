@@ -13,9 +13,11 @@ Endpoints:
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
 from datetime import datetime
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 import httpx
 
@@ -171,25 +173,27 @@ class GitHubAdapter(BaseAdapter):
             if len(items) < self.policy.max_page_size:
                 break
 
-    def normalize(self, raw: RawItem) -> Item:
+    def normalize(self, raw: RawItem, terms: list[str] | None = None) -> Item:
         """Convert GitHub search result to canonical Item."""
         p = raw.payload
         search_kind = p.get("_search_kind", "repo")
 
         if search_kind == "repo":
-            return self._normalize_repo(p, raw)
+            return self._normalize_repo(p, raw, terms)
         elif search_kind == "code":
-            return self._normalize_code(p, raw)
+            return self._normalize_code(p, raw, terms)
         else:
-            return self._normalize_issue(p, raw)
+            return self._normalize_issue(p, raw, terms)
 
-    def _normalize_repo(self, p: dict[str, Any], raw: RawItem) -> Item:
+    def _normalize_repo(
+        self, p: dict[str, Any], raw: RawItem, terms: list[str] | None = None
+    ) -> Item:
         created_at = self._parse_dt(p.get("created_at"))
         updated_at = self._parse_dt(p.get("updated_at"))
         topics = p.get("topics", [])
 
         matched = match_terms(
-            [],
+            terms or [],
             title=p.get("full_name"),
             body=p.get("description"),
             tags=topics,
@@ -228,10 +232,12 @@ class GitHubAdapter(BaseAdapter):
             ),
         )
 
-    def _normalize_code(self, p: dict[str, Any], raw: RawItem) -> Item:
+    def _normalize_code(
+        self, p: dict[str, Any], raw: RawItem, terms: list[str] | None = None
+    ) -> Item:
         repo = p.get("repository", {})
         matched = match_terms(
-            [], title=p.get("name"), path=p.get("path")
+            terms or [], title=p.get("name"), path=p.get("path")
         )
 
         return Item(
@@ -260,13 +266,15 @@ class GitHubAdapter(BaseAdapter):
             ),
         )
 
-    def _normalize_issue(self, p: dict[str, Any], raw: RawItem) -> Item:
+    def _normalize_issue(
+        self, p: dict[str, Any], raw: RawItem, terms: list[str] | None = None
+    ) -> Item:
         created_at = self._parse_dt(p.get("created_at"))
         updated_at = self._parse_dt(p.get("updated_at"))
         labels = [label.get("name", "") for label in p.get("labels", [])]
 
         matched = match_terms(
-            [], title=p.get("title"), body=p.get("body"), tags=labels
+            terms or [], title=p.get("title"), body=p.get("body"), tags=labels
         )
 
         return Item(

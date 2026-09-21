@@ -12,9 +12,11 @@ Endpoints:
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
 from datetime import datetime
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 import httpx
 
@@ -135,7 +137,7 @@ class HuggingFaceAdapter(BaseAdapter):
                 )
                 total_yielded += 1
 
-    def normalize(self, raw: RawItem) -> Item:
+    def normalize(self, raw: RawItem, terms: list[str] | None = None) -> Item:
         """Convert HF model/dataset/space to canonical Item."""
         p = raw.payload
 
@@ -149,8 +151,9 @@ class HuggingFaceAdapter(BaseAdapter):
         url = f"https://huggingface.co/{item_id}"
 
         matched = match_terms(
-            [],
+            terms or [],
             title=item_id,
+            body=p.get("description"),
             tags=tags,
         )
 

@@ -55,6 +55,12 @@ line-length = 100
 select = ["E", "F", "W", "I", "N", "UP", "B", "A", "SIM", "TCH"]
 ignore = ["A003"]
 
+[tool.ruff.lint.per-file-ignores]
+# Pydantic needs date/datetime at runtime for field validation
+"src/msrkit/models.py" = ["TCH003"]
+# Test fixtures use Path at runtime (pytest tmp_path)
+"tests/*.py" = ["TCH003"]
+
 [tool.mypy]
 python_version = "3.11"
 strict = true

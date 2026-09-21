@@ -11,8 +11,10 @@ Check docs/api-notes.md for the latest assessment.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 from msrkit.adapters.base import BaseAdapter
 from msrkit.models import (
@@ -91,5 +93,5 @@ class XTwitterAdapter(BaseAdapter):
         # Stub: yield nothing for now
         return iter([])
 
-    def normalize(self, raw: RawItem) -> Item:
+    def normalize(self, raw: RawItem, terms: list[str] | None = None) -> Item:
         raise NotImplementedError("X/Twitter normalization not implemented in v0.")

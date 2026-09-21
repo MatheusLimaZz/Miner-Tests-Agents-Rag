@@ -10,10 +10,12 @@ No historical coverage. Must be documented in manifest.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
 from datetime import UTC
 from email.utils import parsedate_to_datetime
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 from msrkit.adapters.base import BaseAdapter
 from msrkit.keywords import match_terms
@@ -121,7 +123,7 @@ class RSSAdapter(BaseAdapter):
                 )
                 total_yielded += 1
 
-    def normalize(self, raw: RawItem) -> Item:
+    def normalize(self, raw: RawItem, terms: list[str] | None = None) -> Item:
         """Convert RSS entry to canonical Item."""
         p = raw.payload
 
@@ -139,7 +141,7 @@ class RSSAdapter(BaseAdapter):
             tags = [tags]
 
         matched = match_terms(
-            [], title=p.get("title"), body=p.get("summary"), tags=tags
+            terms or [], title=p.get("title"), body=p.get("summary"), tags=tags
         )
 
         return Item(

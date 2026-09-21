@@ -11,9 +11,11 @@ Endpoints:
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
 from datetime import UTC, datetime
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 import httpx
 
@@ -197,7 +199,7 @@ class RedditAdapter(BaseAdapter):
                 if not after:
                     break
 
-    def normalize(self, raw: RawItem) -> Item:
+    def normalize(self, raw: RawItem, terms: list[str] | None = None) -> Item:
         """Convert Reddit post to canonical Item."""
         p = raw.payload
 
@@ -205,9 +207,13 @@ class RedditAdapter(BaseAdapter):
         if p.get("created_utc"):
             created_at = datetime.fromtimestamp(p["created_utc"], tz=UTC)
 
-        matched = match_terms([], title=p.get("title"), body=p.get("selftext"))
-
         subreddit = p.get("subreddit", "")
+        matched = match_terms(
+            terms or [],
+            title=p.get("title"),
+            body=p.get("selftext"),
+            tags=[subreddit] if subreddit else [],
+        )
         url = f"https://www.reddit.com{p.get('permalink', '')}"
 
         return Item(

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -23,6 +24,13 @@ from rich.console import Console
 from rich.table import Table
 
 from msrkit import __version__
+
+# Ensure UTF-8 output on Windows consoles to avoid charmap encoding errors
+if sys.platform == "win32":
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 app = typer.Typer(
     name="msrkit",
@@ -196,6 +204,9 @@ def validate(
 @app.command()
 def plan(
     protocol: str = typer.Argument(..., help="Path to protocol YAML file"),
+    source: str | None = typer.Option(
+        None, "--source", "-s", help="Filter plan to a single source"
+    ),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
     """Dry run: show partitions and estimated request budget per source."""
@@ -211,6 +222,22 @@ def plan(
 
     registry = _get_registry()
 
+    if source:
+        if source not in config.sources:
+            console.print(
+                f"[red]✗ Source '{source}' is not configured in protocol '{config.name}'[/red]"
+            )
+            raise typer.Exit(1)
+        if not config.sources[source].enabled:
+            console.print(
+                f"[yellow]Note: Source '{source}' is disabled in protocol, "
+                "enabling for this plan.[/yellow]"
+            )
+            config.sources[source].enabled = True
+        sources_to_plan = [source]
+    else:
+        sources_to_plan = config.enabled_sources()
+
     table = Table(title="Collection Plan (Dry Run)", show_lines=True)
     table.add_column("Source", style="bold")
     table.add_column("Status")
@@ -221,7 +248,7 @@ def plan(
 
     total_est_requests = 0
 
-    for source_name in config.enabled_sources():
+    for source_name in sources_to_plan:
         if source_name not in registry:
             table.add_row(source_name, "[red]UNKNOWN[/red]", "-", "-", "-", "-")
             continue
@@ -271,6 +298,12 @@ def plan(
 @app.command()
 def run(
     protocol: str = typer.Argument(..., help="Path to protocol YAML file"),
+    source: str | None = typer.Option(
+        None, "--source", "-s", help="Execute collection for a single source only"
+    ),
+    limit: int | None = typer.Option(
+        None, "--limit", "-l", help="Override max items to collect for this run"
+    ),
     resume: str | None = typer.Option(None, "--resume", help="Resume a previous run by ID"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
@@ -311,7 +344,26 @@ def run(
         started_at=datetime.now(UTC),
     )
 
-    for source_name in sorted(config.sources.keys()):
+    if source:
+        if source not in config.sources:
+            console.print(
+                f"[red]✗ Source '{source}' is not configured in protocol '{config.name}'[/red]"
+            )
+            raise typer.Exit(1)
+        if not config.sources[source].enabled:
+            console.print(
+                f"[yellow]Note: Source '{source}' is disabled in protocol, "
+                "enabling for this run.[/yellow]"
+            )
+            config.sources[source].enabled = True
+        sources_to_run = [source]
+    else:
+        sources_to_run = sorted(config.sources.keys())
+
+    if limit is not None:
+        config.limits.max_items_per_source = limit
+
+    for source_name in sources_to_run:
         src_cfg = config.sources[source_name]
         console.print(f"\n{'='*60}")
         console.print(f"[bold]Source: {source_name}[/bold]")
@@ -343,6 +395,9 @@ def run(
         console.print(f"  Status: [{avail.status}] {avail.reason}")
 
         queries = config.build_queries(source_name)
+        if limit is not None:
+            for q in queries:
+                q.limit = limit
         console.print(f"  Queries to execute: {len(queries)}")
 
         for qi, query in enumerate(queries, 1):
@@ -365,12 +420,24 @@ def run(
 
                     # Normalize
                     try:
-                        item = adapter.normalize(raw_item)
+                        item = adapter.normalize(raw_item, terms=config.terms)
                         # Update provenance
                         item.provenance.run_id = run_id
                         item.provenance.query_string = " ".join(query.terms)
                         item.provenance.partition = f"q{qi}"
                         item.provenance.raw_ref = raw_ref
+
+                        # Post-normalization term matching
+                        if not item.matched_terms and config.terms:
+                            from msrkit.keywords import match_terms
+
+                            item.matched_terms = match_terms(
+                                config.terms,
+                                title=item.title,
+                                body=item.body,
+                                tags=item.tech.tags,
+                                path=item.tech.path,
+                            )
 
                         item_storage.save_items([item], run_id)
                         items_collected += 1
@@ -413,6 +480,7 @@ def run(
 @app.command()
 def normalize(
     run_id: str = typer.Option(..., "--run", help="Run ID to reprocess"),
+    protocol: str | None = typer.Option(None, "--protocol", "-p", help="Path to protocol YAML"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
     """Reprocess items from raw data (no network requests)."""
@@ -427,6 +495,18 @@ def normalize(
     except FileNotFoundError as e:
         console.print(f"[red]✗ {e}[/red]")
         raise typer.Exit(1) from None
+
+    # Load protocol terms if available
+    terms: list[str] = []
+    protocol_path = protocol or manifest.protocol_path
+    if protocol_path and Path(protocol_path).exists():
+        try:
+            from msrkit.config import load_protocol
+
+            proto = load_protocol(protocol_path)
+            terms = proto.terms
+        except Exception as e:
+            logging.getLogger(__name__).warning("Could not load protocol for terms: %s", e)
 
     registry = _get_registry()
     raw_storage = RawStorage(DATA_DIR)
@@ -448,8 +528,18 @@ def normalize(
             normalized = []
             for raw in raw_items:
                 try:
-                    item = adapter.normalize(raw)
+                    item = adapter.normalize(raw, terms=terms)
                     item.provenance.run_id = run_id
+                    if not item.matched_terms and terms:
+                        from msrkit.keywords import match_terms
+
+                        item.matched_terms = match_terms(
+                            terms,
+                            title=item.title,
+                            body=item.body,
+                            tags=item.tech.tags,
+                            path=item.tech.path,
+                        )
                     normalized.append(item)
                 except Exception as e:
                     logging.getLogger(__name__).warning(
@@ -462,8 +552,8 @@ def normalize(
     console.print(f"[green]✓ Normalized {total_items} items from raw data[/green]")
 
 
-@app.command()
-def dedupe_cmd(
+@app.command(name="dedupe")
+def dedupe(
     run_id: str = typer.Option(..., "--run", help="Run ID to deduplicate"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
@@ -495,10 +585,6 @@ def dedupe_cmd(
             f.write(item.model_dump_json() + "\n")
 
     console.print(f"[green]✓ Saved to {deduped_path}[/green]")
-
-
-# Use the function name that typer expects
-app.command(name="dedupe")(dedupe_cmd)
 
 
 @app.command()
@@ -595,15 +681,17 @@ def export(
     # Enforce redistribution policy
     registry = _get_registry()
     if include_body:
-        for item in items:
-            if item.source in registry:
-                adapter_cls = registry[item.source]
-                if adapter_cls.policy.redistribution == "metadata_only":
-                    console.print(
-                        f"[red]✗ Cannot export body for '{item.source}': "
-                        f"redistribution policy is 'metadata_only'.[/red]"
-                    )
-                    raise typer.Exit(1)
+        sources_in_items = {item.source for item in items}
+        violating = [
+            s for s in sorted(sources_in_items)
+            if s in registry and registry[s].policy.redistribution == "metadata_only"
+        ]
+        if violating:
+            console.print(
+                f"[red]✗ Cannot export body: source(s) {', '.join(violating)} "
+                f"have redistribution policy 'metadata_only'.[/red]"
+            )
+            raise typer.Exit(1)
 
     out_path = output or str(DATA_DIR / "export" / run_id / f"items.{fmt}")
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
@@ -638,7 +726,7 @@ def export(
 
         db_path = Path(out_path).with_suffix(".duckdb")
         db = DuckDBStorage(db_path)
-        inserted = db.ingest_items(items)
+        inserted = db.ingest_items(items, include_body=include_body)
         db.close()
         console.print(f"[green]✓ Inserted {inserted} items into {db_path}[/green]")
         return
@@ -649,14 +737,25 @@ def export(
     console.print(f"[green]✓ Exported {len(items)} items to {out_path}[/green]")
 
 
-@app.callback()
-def main(
-    version: bool = typer.Option(False, "--version", "-V", help="Show version"),
-) -> None:
-    """MSR-Kit: Mining grey literature through official APIs."""
-    if version:
+def _version_callback(value: bool) -> None:
+    """Print version and exit."""
+    if value:
         console.print(f"msrkit {__version__}")
         raise typer.Exit()
+
+
+@app.callback()
+def main(
+    version: bool = typer.Option(
+        None,
+        "--version",
+        "-V",
+        help="Show version",
+        callback=_version_callback,
+        is_eager=True,
+    ),
+) -> None:
+    """MSR-Kit: Mining grey literature through official APIs."""
 
 
 if __name__ == "__main__":

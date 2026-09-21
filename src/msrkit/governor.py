@@ -9,10 +9,12 @@ from __future__ import annotations
 import json
 import logging
 import time
-from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
-from msrkit.models import RateLimit
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from msrkit.models import RateLimit
 
 logger = logging.getLogger(__name__)
 
@@ -245,12 +247,11 @@ class Governor:
             self._daily_date = today
             self._daily_count = 0
 
-        if self.rate_limit.daily_cap is not None:
-            if self._daily_count >= self.rate_limit.daily_cap:
-                raise QuotaExhaustedError(
-                    f"Daily cap of {self.rate_limit.daily_cap} requests reached "
-                    f"for adapter '{self.adapter_name}'"
-                )
+        if self.rate_limit.daily_cap is not None and self._daily_count >= self.rate_limit.daily_cap:
+            raise QuotaExhaustedError(
+                f"Daily cap of {self.rate_limit.daily_cap} requests reached "
+                f"for adapter '{self.adapter_name}'"
+            )
 
     def _state_path(self) -> Path | None:
         if self._state_dir is None:
