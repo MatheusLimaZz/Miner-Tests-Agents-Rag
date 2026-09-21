@@ -1,3 +1,5 @@
+name: msrkit
+
 services:
   msrkit:
     build:
