@@ -128,16 +128,22 @@ class ItemStorage:
 
         return file_path
 
-    def read_items(self, run_id: str) -> list[Item]:
+    def read_items(self, run_id: str, prefer_deduped: bool = False) -> list[Item]:
         """Read all normalized items for a run.
 
         Args:
             run_id: Run ID.
+            prefer_deduped: If True and items_deduped.jsonl exists, read from it.
 
         Returns:
             List of Item instances.
         """
-        file_path = self.data_dir / "items" / run_id / "items.jsonl"
+        items_dir = self.data_dir / "items" / run_id
+        if prefer_deduped and (items_dir / "items_deduped.jsonl").exists():
+            file_path = items_dir / "items_deduped.jsonl"
+        else:
+            file_path = items_dir / "items.jsonl"
+
         if not file_path.exists():
             return []
 
@@ -148,6 +154,14 @@ class ItemStorage:
                 if line:
                     items.append(Item.model_validate_json(line))
         return items
+
+    def list_runs(self) -> list[str]:
+        """List all run IDs that contain saved items."""
+        items_dir = self.data_dir / "items"
+        if not items_dir.exists():
+            return []
+        runs = [p.name for p in items_dir.iterdir() if p.is_dir() and (p / "items.jsonl").exists()]
+        return sorted(runs)
 
     def items_hash(self, run_id: str) -> str:
         """Compute SHA-256 hash of the items file for determinism checks.

@@ -458,3 +458,21 @@ limits:
         assert _toggle_source_in_protocol(str(proto_file), "devto", True) is True
         content = proto_file.read_text(encoding="utf-8")
         assert "devto:\n    # dev.to API\n    enabled: true" in content
+
+    def test_export_all_runs(
+        self, tmp_path: Path, sample_items: list[Item], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """msrkit export --all consolidates items from multiple runs and deduplicates them."""
+        monkeypatch.setattr("msrkit.cli.DATA_DIR", tmp_path)
+        storage = ItemStorage(tmp_path)
+        storage.save_items(sample_items[:2], "run-1")
+        storage.save_items(sample_items[1:], "run-2")
+
+        out_file = tmp_path / "consolidated.csv"
+        result = runner.invoke(app, ["export", "--all", "--format", "csv", "-o", str(out_file)])
+        assert result.exit_code == 0
+        assert "Consolidating items from 2 historical runs" in result.stdout
+        assert out_file.exists()
+        lines = out_file.read_text(encoding="utf-8").strip().splitlines()
+        # Header + 2 unique items
+        assert len(lines) == 3

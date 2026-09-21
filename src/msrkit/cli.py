@@ -592,28 +592,43 @@ def dedupe(
     run_id: str | None = typer.Option(
         None, "--run", help="Run ID to deduplicate (defaults to latest)"
     ),
+    all_runs: bool = typer.Option(
+        False, "--all", "-a", help="Consolidate and deduplicate across all historical runs"
+    ),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
-    """Deduplicate items for a run."""
+    """Deduplicate items for a run or across all runs."""
     _setup_logging(verbose)
-
-    if not run_id:
-        run_id = _get_latest_run_id()
-        if not run_id:
-            console.print("[red]✗ No runs found in data directory.[/red]")
-            raise typer.Exit(1)
-        console.print(f"[dim]Auto-selected latest run:[/dim] [cyan]{run_id}[/cyan]")
-
-    console.print(f"[bold]Deduplicating run:[/bold] {run_id}")
 
     from msrkit.dedupe import deduplicate
     from msrkit.storage import ItemStorage
 
     item_storage = ItemStorage(DATA_DIR)
-    items = item_storage.read_items(run_id)
+
+    if all_runs:
+        runs = item_storage.list_runs()
+        if not runs:
+            console.print("[red]✗ No runs found in data directory.[/red]")
+            raise typer.Exit(1)
+        console.print(f"[bold]Deduplicating across {len(runs)} historical runs...[/bold]")
+        all_items = []
+        for r in runs:
+            all_items.extend(item_storage.read_items(r, prefer_deduped=False))
+        items = all_items
+        target_dir = DATA_DIR / "items" / "consolidated"
+    else:
+        if not run_id:
+            run_id = _get_latest_run_id()
+            if not run_id:
+                console.print("[red]✗ No runs found in data directory.[/red]")
+                raise typer.Exit(1)
+            console.print(f"[dim]Auto-selected latest run:[/dim] [cyan]{run_id}[/cyan]")
+        console.print(f"[bold]Deduplicating run:[/bold] {run_id}")
+        items = item_storage.read_items(run_id, prefer_deduped=False)
+        target_dir = DATA_DIR / "items" / run_id
 
     if not items:
-        console.print("[yellow]No items found for this run.[/yellow]")
+        console.print("[yellow]No items found.[/yellow]")
         return
 
     unique, duplicates = deduplicate(items)
@@ -622,9 +637,8 @@ def dedupe(
     console.print(f"  Duplicates removed: {len(duplicates)}")
 
     # Save deduplicated items
-    items_dir = DATA_DIR / "items" / run_id
-    items_dir.mkdir(parents=True, exist_ok=True)
-    deduped_path = items_dir / "items_deduped.jsonl"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    deduped_path = target_dir / "items_deduped.jsonl"
     with open(deduped_path, "w", encoding="utf-8") as f:
         for item in unique:
             f.write(item.model_dump_json() + "\n")
@@ -695,7 +709,7 @@ def stats(
 
     # Check for items file
     item_storage = ItemStorage(DATA_DIR)
-    items_list = item_storage.read_items(run_id)
+    items_list = item_storage.read_items(run_id, prefer_deduped=True)
     if items_list:
         # Count by source
         by_source: dict[str, int] = {}
@@ -713,6 +727,9 @@ def stats(
 @app.command()
 def export(
     run_id: str | None = typer.Option(None, "--run", help="Run ID (defaults to latest)"),
+    all_runs: bool = typer.Option(
+        False, "--all", "-a", help="Consolidate and export items from all historical runs"
+    ),
     fmt: str = typer.Option("jsonl", "--format", "-f", help="Output format: csv, jsonl, duckdb"),
     include_body: bool = typer.Option(False, "--include-body", help="Include body text in export"),
     output: str | None = typer.Option(None, "--output", "-o", help="Output file path"),
@@ -721,20 +738,39 @@ def export(
     """Export collected items."""
     _setup_logging(verbose)
 
-    if not run_id:
-        run_id = _get_latest_run_id()
-        if not run_id:
-            console.print("[red]✗ No runs found in data directory.[/red]")
-            raise typer.Exit(1)
-        console.print(f"[dim]Auto-selected latest run:[/dim] [cyan]{run_id}[/cyan]")
-
     from msrkit.storage import ItemStorage
 
     item_storage = ItemStorage(DATA_DIR)
-    items = item_storage.read_items(run_id)
+
+    if all_runs:
+        runs = item_storage.list_runs()
+        if not runs:
+            console.print("[red]✗ No runs found in data directory.[/red]")
+            raise typer.Exit(1)
+        console.print(f"[bold]Consolidating items from {len(runs)} historical runs...[/bold]")
+        all_items = []
+        for r in runs:
+            all_items.extend(item_storage.read_items(r, prefer_deduped=True))
+        from msrkit.dedupe import deduplicate
+
+        items, dups = deduplicate(all_items)
+        console.print(
+            f"  [green]Total consolidado:[/green] {len(items)} únicos "
+            f"([dim]{len(dups)} duplicatas removidas[/dim])"
+        )
+        target_name = "consolidated"
+    else:
+        if not run_id:
+            run_id = _get_latest_run_id()
+            if not run_id:
+                console.print("[red]✗ No runs found in data directory.[/red]")
+                raise typer.Exit(1)
+            console.print(f"[dim]Auto-selected latest run:[/dim] [cyan]{run_id}[/cyan]")
+        items = item_storage.read_items(run_id, prefer_deduped=True)
+        target_name = run_id
 
     if not items:
-        console.print("[yellow]No items found for this run.[/yellow]")
+        console.print("[yellow]No items found to export.[/yellow]")
         return
 
     # Enforce redistribution policy
@@ -753,7 +789,7 @@ def export(
             )
             raise typer.Exit(1)
 
-    out_path = output or str(DATA_DIR / "export" / run_id / f"items.{fmt}")
+    out_path = output or str(DATA_DIR / "export" / target_name / f"items.{fmt}")
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
 
     if fmt == "jsonl":
@@ -1096,13 +1132,23 @@ def menu() -> None:
         elif choice == "4":
             plan(protocol=DEFAULT_PROTOCOL, source=None, verbose=False)
         elif choice == "5":
-            dedupe(run_id=None, verbose=False)
+            which = Prompt.ask(
+                "Desduplicar [1] Apenas a última coleta ou [2] Todas as coletas históricas?",
+                default="1",
+            )
+            dedupe(run_id=None, all_runs=(which == "2"), verbose=False)
         elif choice == "6":
+            which = Prompt.ask(
+                "Exportar [1] Apenas a última coleta ou [2] Consolidado de todas as coletas?",
+                default="1",
+            )
+            out_file = "data/resultados.csv" if which == "1" else "data/resultados_consolidados.csv"
             export(
                 run_id=None,
+                all_runs=(which == "2"),
                 fmt="csv",
                 include_body=False,
-                output="data/resultados.csv",
+                output=out_file,
                 verbose=False,
             )
         elif choice == "7":
