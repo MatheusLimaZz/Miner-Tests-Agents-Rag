@@ -42,37 +42,86 @@ Ele foi construído especialmente para apoiar pesquisas acadêmicas (MSR/SLR) qu
 ## 🐳 Opção A: Executar com Docker (Recomendado - 100% Isolado)
 
 Esta é a opção mais limpa e moderna. O MSR-Kit roda dentro de um container Linux isolado baseado em **Ubuntu 24.04 LTS**.
-- ✅ **Zero poluição no seu Windows:** Não altera `PATH`, não precisa de `.bat` e não instala bibliotecas no seu computador.
+- ✅ **Zero poluição no seu computador:** Não altera o `PATH`, não precisa de arquivos `.bat` e não instala Python ou bibliotecas no seu Windows.
 - ✅ **Persistência automática:** Todas as planilhas CSV e dados coletados aparecem diretamente na pasta `data/` do seu computador.
 
-### Passo 1: Construir a imagem (apenas na 1ª vez)
-Com o Docker Desktop ou Podman aberto, abra o terminal na pasta do projeto e rode:
+---
+
+### 📦 Preparação Inicial (Apenas na 1ª vez)
+
+Certifique-se de que o **Docker Desktop** está aberto. No terminal da pasta do projeto, execute os 2 passos abaixo:
+
+#### Passo 1: Construir a Imagem
 ```bash
 docker compose build
 ```
+> **O que faz:** O Docker baixa a imagem oficial do **Ubuntu 24.04 LTS**, instala o Python 3.12, as dependências e empacota o MSR-Kit na imagem local `msrkit:ubuntu`.
 
-### Passo 2: Abrir o Menu Interativo
+#### Passo 2: Criar o Container Único
 ```bash
-docker compose run --rm msrkit
+docker compose create msrkit
 ```
-*(O menu abrirá diretamente no terminal com opções de `0` a `9`).*
+> **O que faz:** Cria um container fixo chamado **`msrkit`**, mapeando a pasta `./data` do seu computador para o container. Ele fica pronto para ser ligado a qualquer momento.
 
-### Passo 3: Ou rodar comandos diretos pelo Docker
-Você pode executar qualquer comando adicionando os argumentos após `msrkit`:
+---
+
+### 🚀 Formas de Executar a Aplicação
+
+Você pode escolher a forma que achar mais conveniente:
+
+#### Forma 1: Pelo Terminal (Container Único / Mais Rápido) ⭐ *Recomendada*
+Para usar o container fixo que você criou sem recriar novos containers toda vez:
+
 ```bash
-# Validar o protocolo sem gastar requisições:
+docker start -ai msrkit
+```
+- **Início instantâneo (< 1 segundo):** "Acorda" o container existente e abre o menu visual na tela.
+- **Ao digitar `0` (Sair):** O container simplesmente dorme (desliga). Nenhum container novo é criado.
+
+---
+
+#### Forma 2: Pela Interface Visual do Docker Desktop (100% sem Terminal) 🖱️
+Se você prefere clicar em vez de usar comandos:
+1. Abra o **Docker Desktop** e vá na aba **Containers** (menu lateral esquerdo).
+2. Localize e clique no container **`msrkit`**.
+3. Se estiver parado, clique no botão **Start / Play (▶)** no canto superior direito.
+4. Clique na aba **Exec** (ou **Terminal**) no topo da janela.
+5. Digite `msrkit menu` e dê Enter. O menu interativo rodará direto na interface visual do Docker!
+
+---
+
+#### Forma 3: Entrar no Terminal Linux (Bash) dentro do Container 🐧
+Se você quiser ter uma linha de comando Linux completa dentro do Ubuntu 24.04 para explorar arquivos e rodar comandos manualmente:
+
+```bash
+docker compose run --rm --entrypoint bash msrkit
+```
+- O seu prompt mudará para: `root@...:/app# `
+- Lá de dentro você pode digitar comandos Linux (`ls`, `pwd`) ou comandos da ferramenta (`msrkit menu`, `msrkit sources`).
+- Para sair e voltar ao Windows, basta digitar: `exit`
+
+---
+
+#### Forma 4: Comandos Diretos da CLI via Docker (Para Automação / Scripts) 💻
+Se você quiser disparar comandos específicos diretamente pelo Docker (sem abrir menus):
+
+```bash
+# Validar o protocolo sem gastar requisições de rede:
 docker compose run --rm msrkit validate protocols/v0_rag_agents_testing.yaml
 
-# Simulação / Orçamento de requisições (Dry Run):
+# Fazer simulação / orçamento de requisições (Dry Run):
 docker compose run --rm msrkit plan protocols/v0_rag_agents_testing.yaml --source hackernews
 
-# Coletar 10 itens de teste do Hacker News:
+# Coletar 10 itens rápidos do Hacker News:
 docker compose run --rm msrkit run protocols/v0_rag_agents_testing.yaml --source hackernews --limit 10
 
-# Desduplicar itens coletados na última rodada:
+# Desduplicar itens coletados:
 docker compose run --rm msrkit dedupe
 
-# Exportar para uma planilha CSV pronta para análise:
+# Ver estatísticas da coleta:
+docker compose run --rm msrkit stats
+
+# Exportar para planilha CSV (salva direto em data/resultados.csv no Windows):
 docker compose run --rm msrkit export -f csv -o data/resultados.csv
 ```
 
