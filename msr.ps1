@@ -11,6 +11,8 @@ if (-not (Test-Path $PythonExe)) {
     exit 1
 }
 
+$env:PYTHONPATH = "$PSScriptRoot\src;$env:PYTHONPATH"
+
 if ($ArgsList.Count -eq 0) {
     & $PythonExe -m msrkit.cli menu
 } else {

@@ -40,8 +40,17 @@ app = typer.Typer(
 console = Console()
 
 # Default data directory and protocol
-DATA_DIR = Path("data")
-DEFAULT_PROTOCOL = "protocols/v0_rag_agents_testing.yaml"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+DATA_DIR = (
+    Path("data")
+    if Path("data").exists()
+    else (PROJECT_ROOT / "data")
+)
+DEFAULT_PROTOCOL = (
+    "protocols/v0_rag_agents_testing.yaml"
+    if Path("protocols/v0_rag_agents_testing.yaml").exists()
+    else str(PROJECT_ROOT / "protocols" / "v0_rag_agents_testing.yaml")
+)
 
 
 def _get_latest_run_id() -> str | None:
