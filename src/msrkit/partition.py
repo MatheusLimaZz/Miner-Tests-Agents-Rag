@@ -77,8 +77,7 @@ def partition(
     # Guard against infinite recursion
     if depth >= max_depth:
         logger.warning(
-            "Partition depth %d reached for query %s, marking as truncated "
-            "(estimated=%d, max=%d)",
+            "Partition depth %d reached for query %s, marking as truncated (estimated=%d, max=%d)",
             depth,
             q.terms,
             estimated,

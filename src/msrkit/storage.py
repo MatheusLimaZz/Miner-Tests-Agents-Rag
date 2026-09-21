@@ -79,9 +79,7 @@ class RawStorage:
         Returns:
             List of RawItem instances.
         """
-        file_path = (
-            self.data_dir / "raw" / source / run_id / f"{partition_hash}.jsonl.gz"
-        )
+        file_path = self.data_dir / "raw" / source / run_id / f"{partition_hash}.jsonl.gz"
         if not file_path.exists():
             return []
 
@@ -98,10 +96,7 @@ class RawStorage:
         raw_dir = self.data_dir / "raw" / source / run_id
         if not raw_dir.exists():
             return []
-        return [
-            p.stem.replace(".jsonl", "")
-            for p in raw_dir.glob("*.jsonl.gz")
-        ]
+        return [p.stem.replace(".jsonl", "") for p in raw_dir.glob("*.jsonl.gz")]
 
 
 class ItemStorage:

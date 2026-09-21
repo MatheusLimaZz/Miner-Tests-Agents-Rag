@@ -104,9 +104,7 @@ class HackerNewsAdapter(BaseAdapter):
                 if total_yielded >= limit:
                     return
 
-                params = self._build_params(
-                    q, term=term, page=page, hits_per_page=hits_per_page
-                )
+                params = self._build_params(q, term=term, page=page, hits_per_page=hits_per_page)
                 resp = self._governed_get(f"{_BASE_URL}/search", params=params)
 
                 if resp.status_code != 200:
@@ -197,9 +195,7 @@ class HackerNewsAdapter(BaseAdapter):
         hits_per_page: int = 1000,
         term: str | None = None,
     ) -> dict[str, Any]:
-        query_str = (
-            term if term is not None else (" OR ".join(q.terms) if q.terms else "")
-        )
+        query_str = term if term is not None else (" OR ".join(q.terms) if q.terms else "")
 
         params: dict[str, Any] = {
             "query": query_str,
@@ -214,9 +210,7 @@ class HackerNewsAdapter(BaseAdapter):
             since_ts = int(datetime.combine(q.since, datetime.min.time(), UTC).timestamp())
             filters.append(f"created_at_i>{since_ts}")
         if q.until:
-            until_dt = datetime.combine(
-                q.until, datetime.max.time().replace(microsecond=0), UTC
-            )
+            until_dt = datetime.combine(q.until, datetime.max.time().replace(microsecond=0), UTC)
             until_ts = int(until_dt.timestamp())
             filters.append(f"created_at_i<{until_ts}")
 

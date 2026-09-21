@@ -145,9 +145,7 @@ class DevToAdapter(BaseAdapter):
         created_at = None
         if p.get("published_at"):
             with contextlib.suppress(ValueError, TypeError):
-                created_at = datetime.fromisoformat(
-                    p["published_at"].replace("Z", "+00:00")
-                )
+                created_at = datetime.fromisoformat(p["published_at"].replace("Z", "+00:00"))
 
         tags = p.get("tag_list", [])
         if isinstance(tags, str):

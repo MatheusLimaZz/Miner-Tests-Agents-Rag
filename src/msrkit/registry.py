@@ -32,9 +32,7 @@ def get_adapter(name: str) -> type[BaseAdapter]:
         KeyError: If no adapter with the given name is registered.
     """
     if name not in _REGISTRY:
-        raise KeyError(
-            f"Unknown adapter '{name}'. Available: {sorted(_REGISTRY.keys())}"
-        )
+        raise KeyError(f"Unknown adapter '{name}'. Available: {sorted(_REGISTRY.keys())}")
     return _REGISTRY[name]
 
 

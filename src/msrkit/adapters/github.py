@@ -236,9 +236,7 @@ class GitHubAdapter(BaseAdapter):
         self, p: dict[str, Any], raw: RawItem, terms: list[str] | None = None
     ) -> Item:
         repo = p.get("repository", {})
-        matched = match_terms(
-            terms or [], title=p.get("name"), path=p.get("path")
-        )
+        matched = match_terms(terms or [], title=p.get("name"), path=p.get("path"))
 
         return Item(
             id=Item.make_id(self.name, p.get("sha", "")),
@@ -273,9 +271,7 @@ class GitHubAdapter(BaseAdapter):
         updated_at = self._parse_dt(p.get("updated_at"))
         labels = [label.get("name", "") for label in p.get("labels", [])]
 
-        matched = match_terms(
-            terms or [], title=p.get("title"), body=p.get("body"), tags=labels
-        )
+        matched = match_terms(terms or [], title=p.get("title"), body=p.get("body"), tags=labels)
 
         return Item(
             id=Item.make_id(self.name, str(p.get("id", ""))),

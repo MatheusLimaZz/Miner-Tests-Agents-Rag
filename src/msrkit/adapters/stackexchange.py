@@ -132,9 +132,7 @@ class StackExchangeAdapter(BaseAdapter):
                 params = self._build_params(
                     q, site=site, page=page, pagesize=self.policy.max_page_size
                 )
-                resp = self._governed_get(
-                    f"{_BASE_URL}/search/advanced", params=params
-                )
+                resp = self._governed_get(f"{_BASE_URL}/search/advanced", params=params)
 
                 if resp.status_code != 200:
                     logger.warning(
@@ -177,16 +175,12 @@ class StackExchangeAdapter(BaseAdapter):
 
         updated_at = None
         if p.get("last_activity_date"):
-            updated_at = datetime.fromtimestamp(
-                p["last_activity_date"], tz=UTC
-            )
+            updated_at = datetime.fromtimestamp(p["last_activity_date"], tz=UTC)
 
         tags = p.get("tags", [])
         url = p.get("link", f"https://{site}.com/q/{p.get('question_id', '')}")
 
-        matched = match_terms(
-            terms or [], title=p.get("title"), body=p.get("body"), tags=tags
-        )
+        matched = match_terms(terms or [], title=p.get("title"), body=p.get("body"), tags=tags)
 
         return Item(
             id=Item.make_id(self.name, str(p.get("question_id", ""))),

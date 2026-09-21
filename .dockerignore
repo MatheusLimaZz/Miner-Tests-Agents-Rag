@@ -14,5 +14,3 @@ data/
 dist/
 build/
 *.egg-info/
-setup.bat
-setup.sh

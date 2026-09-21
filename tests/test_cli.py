@@ -176,9 +176,7 @@ class TestCliCommands:
         storage = ItemStorage(tmp_path)
         storage.save_items(sample_items, "run-export-test")
 
-        result = runner.invoke(
-            app, ["export", "--run", "run-export-test", "--include-body"]
-        )
+        result = runner.invoke(app, ["export", "--run", "run-export-test", "--include-body"])
         assert result.exit_code == 1
         assert "Cannot export body" in result.stdout
         assert "metadata_only" in result.stdout
@@ -327,9 +325,7 @@ class TestCliCommands:
         assert result.exit_code == 0
         assert "msrkit" in result.stdout
 
-    def test_run_command_success(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_run_command_success(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """msrkit run executes collection and creates manifest + raw + items."""
         monkeypatch.setattr("msrkit.cli.DATA_DIR", tmp_path)
 
@@ -437,4 +433,3 @@ limits:
         )
         assert result.exit_code == 1
         assert "not configured in protocol" in result.stdout
-

@@ -42,11 +42,7 @@ console = Console()
 
 # Default data directory and protocol
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-DATA_DIR = (
-    Path("data")
-    if Path("data").exists()
-    else (PROJECT_ROOT / "data")
-)
+DATA_DIR = Path("data") if Path("data").exists() else (PROJECT_ROOT / "data")
 DEFAULT_PROTOCOL = (
     "protocols/v0_rag_agents_testing.yaml"
     if Path("protocols/v0_rag_agents_testing.yaml").exists()
@@ -171,7 +167,7 @@ def _sources_md(registry: dict[str, type]) -> None:
         )
         if policy.rate_limit.daily_cap:
             lines.append(f"- **Daily cap:** {policy.rate_limit.daily_cap}")
-        fts = 'Yes' if policy.supports_full_text_search else 'No'
+        fts = "Yes" if policy.supports_full_text_search else "No"
         lines.append(f"- **Full-text search:** {fts}")
         lines.append(f"- **Date filter:** {'Yes' if policy.supports_date_filter else 'No'}")
         lines.append(f"- **Redistribution:** {policy.redistribution}")
@@ -289,7 +285,10 @@ def plan(
             table.add_row(
                 source_name,
                 f"[red]{avail.status}[/red]",
-                "-", "-", "-", "0",
+                "-",
+                "-",
+                "-",
+                "0",
             )
             continue
 
@@ -393,7 +392,7 @@ def run(
 
     for source_name in sources_to_run:
         src_cfg = config.sources[source_name]
-        console.print(f"\n{'='*60}")
+        console.print(f"\n{'=' * 60}")
         console.print(f"[bold]Source: {source_name}[/bold]")
 
         if source_name not in registry:
@@ -580,9 +579,7 @@ def normalize(
                         )
                     normalized.append(item)
                 except Exception as e:
-                    logging.getLogger(__name__).warning(
-                        "Normalization error: %s", e
-                    )
+                    logging.getLogger(__name__).warning("Normalization error: %s", e)
             if normalized:
                 item_storage.save_items(normalized, run_id)
                 total_items += len(normalized)
@@ -745,7 +742,8 @@ def export(
     if include_body:
         sources_in_items = {item.source for item in items}
         violating = [
-            s for s in sorted(sources_in_items)
+            s
+            for s in sorted(sources_in_items)
             if s in registry and registry[s].policy.redistribution == "metadata_only"
         ]
         if violating:
@@ -769,8 +767,14 @@ def export(
         import csv
 
         fields = [
-            "id", "source", "kind", "url", "title", "author_handle",
-            "created_at", "updated_at",
+            "id",
+            "source",
+            "kind",
+            "url",
+            "title",
+            "author_handle",
+            "created_at",
+            "updated_at",
         ]
         if include_body:
             fields.append("body")
@@ -884,5 +888,3 @@ def main(
 
 if __name__ == "__main__":
     app()
-
-

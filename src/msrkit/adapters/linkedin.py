@@ -80,8 +80,7 @@ class LinkedInAdapter(BaseAdapter):
     def search(self, q: Query) -> Iterator[RawItem]:
         raise SourceUnsupportedError(
             self.name,
-            "LinkedIn is permanently unsupported. See adapters/linkedin.py "
-            "and specification §2.2.",
+            "LinkedIn is permanently unsupported. See adapters/linkedin.py and specification §2.2.",
         )
 
     def normalize(self, raw: RawItem, terms: list[str] | None = None) -> Item:

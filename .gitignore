@@ -21,7 +21,8 @@ env/
 .env
 
 # Data (never commit collected data)
-data/
+data/*
+!data/.gitkeep
 
 # DuckDB
 *.duckdb

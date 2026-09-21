@@ -180,9 +180,7 @@ class BlueskyAdapter(BaseAdapter):
         created_at = None
         if record.get("createdAt"):
             with contextlib.suppress(ValueError, TypeError):
-                created_at = datetime.fromisoformat(
-                    record["createdAt"].replace("Z", "+00:00")
-                )
+                created_at = datetime.fromisoformat(record["createdAt"].replace("Z", "+00:00"))
 
         author = p.get("author", {})
         handle = author.get("handle", "")

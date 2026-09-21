@@ -95,9 +95,7 @@ class TestDeterminism:
             h = storage.items_hash(run_id)
             hashes.append(h)
 
-        assert hashes[0] == hashes[1], (
-            f"Determinism failure: hash1={hashes[0]}, hash2={hashes[1]}"
-        )
+        assert hashes[0] == hashes[1], f"Determinism failure: hash1={hashes[0]}, hash2={hashes[1]}"
 
     def test_item_id_deterministic(self, raw_items: list[RawItem]) -> None:
         """Same raw data always produces the same Item ID."""

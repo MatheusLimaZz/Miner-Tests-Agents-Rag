@@ -140,9 +140,7 @@ class RSSAdapter(BaseAdapter):
         if isinstance(tags, str):
             tags = [tags]
 
-        matched = match_terms(
-            terms or [], title=p.get("title"), body=p.get("summary"), tags=tags
-        )
+        matched = match_terms(terms or [], title=p.get("title"), body=p.get("summary"), tags=tags)
 
         return Item(
             id=Item.make_id(self.name, str(raw.native_id)),

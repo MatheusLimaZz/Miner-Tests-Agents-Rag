@@ -75,10 +75,7 @@ class RedditAdapter(BaseAdapter):
         if not all_present:
             return Availability(
                 status=AvailabilityStatus.UNSUPPORTED,
-                reason=(
-                    "Reddit OAuth2 credentials not configured. "
-                    f"Missing: {', '.join(missing)}"
-                ),
+                reason=(f"Reddit OAuth2 credentials not configured. Missing: {', '.join(missing)}"),
                 missing_env=missing,
             )
         return Availability(
@@ -174,9 +171,7 @@ class RedditAdapter(BaseAdapter):
                 )
 
                 if resp.status_code != 200:
-                    logger.warning(
-                        "Reddit search returned %d for r/%s", resp.status_code, sub
-                    )
+                    logger.warning("Reddit search returned %d for r/%s", resp.status_code, sub)
                     break
 
                 data = resp.json()
