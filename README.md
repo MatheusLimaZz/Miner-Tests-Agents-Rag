@@ -8,107 +8,97 @@ MSR-Kit is a command-line tool that collects, normalizes, deduplicates, and expo
 
 ## Quick Start
 
-### 1. Install
+### 🚀 Começando do Zero (Instalação em 1 Clique)
+
+Se você está testando o MSR-Kit em um computador novo ou não tem experiência com Python/linha de comando:
+
+- **No Windows:** Dê dois cliques em `setup.bat` (ou abra o terminal e digite `.\setup.bat`).
+- **No Linux / macOS:** Execute `./setup.sh` no terminal.
+
+O script verifica o Python, cria o ambiente virtual isolado, instala todas as dependências e **abre o menu interativo automaticamente**. Você não precisa digitar comandos complexos!
+
+---
+
+### Instalação Manual (Para Desenvolvedores)
 
 ```bash
-# With uv (recommended)
-uv pip install -e ".[dev]"
+# 1. Crie e ative um ambiente virtual:
+python -m venv .venv
+source .venv/bin/activate    # Linux / macOS
+.venv\Scripts\activate      # Windows
 
-# Or with pip
+# 2. Instale o pacote em modo editável:
 pip install -e ".[dev]"
+# Ou com uv: uv pip install -e ".[dev]"
 ```
 
-### 2. Configure Credentials
+### 1. Menu Interativo (Mais Fácil)
 
-Copy `.env.example` to `.env` and fill in the API keys you have:
+Para usar a aplicação navegando por opções visuais (sem decorar comandos):
+
+```bash
+msrkit menu
+```
+
+### 2. Configurar Credenciais (Opcional)
+
+Nenhuma credencial é necessária para começar a testar — **Hacker News**, **dev.to** e **RSS** funcionam sem qualquer chave.
+
+Para minerar o GitHub ou Stack Overflow com cotas maiores, copie o arquivo de exemplo e insira seus tokens:
 
 ```bash
 cp .env.example .env
 ```
 
-Only sources whose credentials are configured will be available. At minimum, you need no credentials at all — Hacker News, dev.to, and RSS work without authentication.
+| Variável | Fonte | Obrigatório? |
+|----------|-------|--------------|
+| `GITHUB_TOKEN` | GitHub | Recomendado (60 req/h sem token, 5.000 com token) |
+| `STACKEXCHANGE_KEY` | Stack Exchange | Opcional (eleva a cota diária para 10.000) |
+| `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, `REDDIT_USER_AGENT` | Reddit | Obrigatório para o Reddit |
+| `HF_TOKEN` | Hugging Face | Opcional |
+| `BLUESKY_HANDLE`, `BLUESKY_APP_PASSWORD` | Bluesky | Obrigatório para o Bluesky |
+| `X_BEARER_TOKEN` | X/Twitter | Plano pago |
+| `DISCORD_BOT_TOKEN`, `DISCORD_GUILD_IDS` | Discord | Bot + permissão de admin |
 
-Available credentials:
-
-| Variable | Source | Required? |
-|----------|--------|-----------|
-| `GITHUB_TOKEN` | GitHub | Recommended (60 req/h without, 5000 with) |
-| `STACKEXCHANGE_KEY` | Stack Exchange | Optional (raises daily quota) |
-| `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, `REDDIT_USER_AGENT` | Reddit | Required for Reddit |
-| `HF_TOKEN` | Hugging Face | Optional (raises rate limits) |
-| `BLUESKY_HANDLE`, `BLUESKY_APP_PASSWORD` | Bluesky | Required for Bluesky |
-| `X_BEARER_TOKEN` | X/Twitter | Paid plan required |
-| `DISCORD_BOT_TOKEN`, `DISCORD_GUILD_IDS` | Discord | Bot + admin auth required |
-
-### 3. Edit the Protocol
-
-Open `protocols/v0_rag_agents_testing.yaml` and customize:
-
-- **`window.since` / `window.until`**: The date range to search
-- **`terms`**: Search keywords (edit these for your research question)
-- **`sources`**: Enable/disable sources and configure source-specific filters
-
-### 4. Validate & Plan
+### 3. Execução via Linha de Comando (CLI)
 
 ```bash
-# Using the shortcut (Windows PowerShell or CMD):
-.\msr validate
-.\msr plan --source hackernews
+# 1. Validar o protocolo de pesquisa (sem gastar rede):
+msrkit validate protocols/v0_rag_agents_testing.yaml
 
-# Or using the msrkit CLI:
-msrkit validate
-msrkit plan --source hackernews
+# 2. Fazer uma simulação prévia / orçamento de requisições (Dry Run):
+msrkit plan protocols/v0_rag_agents_testing.yaml --source hackernews
+
+# 3. Executar a coleta (teste rápido com 5 itens):
+msrkit run protocols/v0_rag_agents_testing.yaml --source hackernews --limit 5
+
+# 4. Executar coleta completa do protocolo:
+msrkit run protocols/v0_rag_agents_testing.yaml
+
+# 5. Desduplicar itens coletados:
+msrkit dedupe
+
+# 6. Ver estatísticas da coleta:
+msrkit stats
+
+# 7. Exportar resultados para CSV:
+msrkit export -f csv -o resultados.csv
 ```
 
-### 5. Run Collection
+## Tabela de Comandos
 
-```bash
-# Quick test: collect 5 items from a single source
-.\msr run -s hackernews -l 5
-
-# Full collection using the default protocol:
-.\msr run
-
-# Resume an interrupted run:
-.\msr run --resume <run_id>
-```
-
-### 6. Post-Processing & Export
-
-```bash
-# Deduplicate (auto-selects the latest run):
-.\msr dedupe
-
-# View statistics:
-.\msr stats
-
-# Export to CSV / JSONL / DuckDB:
-.\msr export -f csv -o resultados.csv
-.\msr export -f jsonl
-.\msr export -f duckdb
-```
-
-### 7. Interactive Terminal Menu
-
-Simply run without arguments to open the interactive wizard:
-
-```powershell
-.\msr
-```
-
-## Commands
-
-| Command | Description |
-|---------|-------------|
-| `msrkit menu` (or `.\msr`) | Interactive terminal menu to run commands easily |
-| `msrkit sources [--md]` | List all adapters with availability and policies |
-| `msrkit validate [protocol]` | Validate protocol schema + credentials (defaults to sample protocol) |
-| `msrkit plan [protocol] [-s source]` | Dry run: show partitions and request budget |
-| `msrkit run [protocol] [-s source] [-l limit]` | Execute collection (retomable with `--resume`) |
-| `msrkit dedupe [--run <id>]` | Deduplicate items (defaults to latest run) |
-| `msrkit stats [--run <id>]` | Show collection statistics (defaults to latest run) |
-| `msrkit export [--run <id>] [-f fmt]` | Export to CSV/JSONL/DuckDB (defaults to latest run) |
-| `msrkit normalize [--run <id>]` | Reprocess from raw data (defaults to latest run) |
+| Comando | Descrição |
+|---------|-----------|
+| `msrkit` | Exibe a tela de ajuda com todos os comandos |
+| `msrkit menu` | Menu interativo no terminal com opções numéricas |
+| `msrkit sources [--md]` | Lista todos os adaptadores, disponibilidade e políticas |
+| `msrkit validate [protocol]` | Valida o esquema do protocolo e credenciais (sem rede) |
+| `msrkit plan [protocol] [-s source]` | Simulação prévia (Dry run): partições e orçamento |
+| `msrkit run [protocol] [-s source] [-l limit]` | Executa a coleta dos dados (retomável com `--resume`) |
+| `msrkit dedupe [--run <id>]` | Desduplica itens coletados (usa a última coleta por padrão) |
+| `msrkit stats [--run <id>]` | Exibe estatísticas de itens, requisições e descartes |
+| `msrkit export [--run <id>] [-f fmt]` | Exporta para CSV, JSONL ou DuckDB |
+| `msrkit normalize [--run <id>]` | Reprocessa itens a partir dos dados brutos armazenados |
 
 ## Architecture
 
