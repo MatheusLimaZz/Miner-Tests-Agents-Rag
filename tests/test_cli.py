@@ -433,3 +433,28 @@ limits:
         )
         assert result.exit_code == 1
         assert "not configured in protocol" in result.stdout
+
+    def test_toggle_source_in_protocol(self, tmp_path: Path) -> None:
+        """_toggle_source_in_protocol toggles enabled state while preserving comments."""
+        from msrkit.cli import _toggle_source_in_protocol
+
+        proto_file = tmp_path / "test_proto.yaml"
+        proto_file.write_text(
+            """sources:
+  hackernews:
+    # Public Algolia API
+    enabled: true
+  devto:
+    # dev.to API
+    enabled: false
+""",
+            encoding="utf-8",
+        )
+
+        assert _toggle_source_in_protocol(str(proto_file), "hackernews", False) is True
+        content = proto_file.read_text(encoding="utf-8")
+        assert "hackernews:\n    # Public Algolia API\n    enabled: false" in content
+
+        assert _toggle_source_in_protocol(str(proto_file), "devto", True) is True
+        content = proto_file.read_text(encoding="utf-8")
+        assert "devto:\n    # dev.to API\n    enabled: true" in content

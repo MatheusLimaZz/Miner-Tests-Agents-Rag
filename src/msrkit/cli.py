@@ -803,6 +803,251 @@ def export(
     console.print(f"[green]✓ Exported {len(items)} items to {out_path}[/green]")
 
 
+def _toggle_source_in_protocol(protocol_path: str, source_name: str, new_state: bool) -> bool:
+    """Toggle a source's enabled state in the protocol YAML file while preserving comments."""
+    import re
+
+    p = Path(protocol_path)
+    if not p.exists():
+        return False
+    try:
+        content = p.read_text(encoding="utf-8")
+        pattern = (
+            rf"(^\s*{re.escape(source_name)}:\s*\n"
+            r"(?:[ \t]*#[^\n]*\n)*[ \t]*enabled:\s*)(true|false)"
+        )
+        match = re.search(pattern, content, flags=re.MULTILINE)
+        if match:
+            new_val = "true" if new_state else "false"
+            content = re.sub(pattern, rf"\g<1>{new_val}", content, count=1, flags=re.MULTILINE)
+            p.write_text(content, encoding="utf-8")
+            return True
+
+        import yaml
+
+        with p.open("r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        if "sources" in data and source_name in data["sources"]:
+            data["sources"][source_name]["enabled"] = new_state
+            with p.open("w", encoding="utf-8") as f:
+                yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+            return True
+    except Exception as e:
+        logging.getLogger(__name__).warning("Failed to update protocol file: %s", e)
+    return False
+
+
+def _manage_sources_menu(protocol_path: str) -> None:
+    """Interactive screen to toggle sources on/off based on availability."""
+    from rich.prompt import Prompt
+
+    from msrkit.config import load_protocol
+
+    while True:
+        try:
+            config = load_protocol(protocol_path)
+        except Exception as e:
+            console.print(f"[red]Erro ao carregar protocolo: {e}[/red]")
+            return
+
+        registry = _get_registry()
+        all_sources = sorted(set(list(config.sources.keys()) + list(registry.keys())))
+
+        table = Table(
+            title="[bold cyan]Gerenciamento de Fontes de Pesquisa[/bold cyan]",
+            border_style="cyan",
+            header_style="bold magenta",
+        )
+        table.add_column("#", style="bold cyan", width=4)
+        table.add_column("Fonte", style="bold")
+        table.add_column("No Protocolo", justify="center")
+        table.add_column("Disponibilidade API", justify="center")
+        table.add_column("Status / Requisitos")
+
+        source_list: list[tuple[str, bool]] = []
+        for idx, s_name in enumerate(all_sources, 1):
+            is_enabled = config.sources[s_name].enabled if s_name in config.sources else False
+            source_list.append((s_name, is_enabled))
+
+            if s_name in registry:
+                adapter = registry[s_name]()
+                avail = adapter.available()
+                if avail.status == "OK":
+                    avail_str = "[bold green]✓ OK[/bold green]"
+                    notes = "[green]Pronta (Pública/Sem chaves)[/green]"
+                elif avail.status == "DEGRADED":
+                    avail_str = "[bold yellow]⚠ PARCIAL[/bold yellow]"
+                    notes = f"[yellow]{avail.reason}[/yellow]"
+                else:
+                    avail_str = "[bold red]✗ INDISPONÍVEL[/bold red]"
+                    notes = f"[red]{avail.reason}[/red]"
+            else:
+                avail_str = "[dim]DESCONHECIDA[/dim]"
+                notes = "-"
+
+            status_str = (
+                "[bold green]● ATIVADA[/bold green]" if is_enabled else "[dim]○ Desativada[/dim]"
+            )
+            table.add_row(str(idx), s_name, status_str, avail_str, notes)
+
+        console.print()
+        console.print(table)
+        console.print("[dim]• Digite o número da fonte para alternar (Ativar ⇄ Desativar).[/dim]")
+        console.print(
+            "[dim]• Fontes com '✓ OK' podem ser ativadas e usadas imediatamente sem chaves.[/dim]"
+        )
+
+        choice = Prompt.ask(
+            "\n[bold green]Digite o número da fonte para alternar (ou 0 para voltar)[/bold green]",
+            default="0",
+        )
+        if choice == "0":
+            break
+
+        try:
+            chosen_idx = int(choice)
+            if 1 <= chosen_idx <= len(source_list):
+                target_source, curr_state = source_list[chosen_idx - 1]
+                new_state = not curr_state
+                success = _toggle_source_in_protocol(protocol_path, target_source, new_state)
+                if success:
+                    word = (
+                        "[bold green]ativada[/bold green]"
+                        if new_state
+                        else "[yellow]desativada[/yellow]"
+                    )
+                    console.print(
+                        f"\n[green]✓ Fonte[/green] [bold]{target_source}[/bold] {word} "
+                        "[green]com sucesso no protocolo![/green]"
+                    )
+                else:
+                    console.print(
+                        f"\n[red]✗ Não foi possível alterar a fonte '{target_source}'.[/red]"
+                    )
+            else:
+                console.print("[red]Número inválido![/red]")
+        except ValueError:
+            console.print("[red]Entrada inválida! Digite um número.[/red]")
+
+
+def _interactive_mining_menu(protocol_path: str) -> None:
+    """Interactive mining execution with custom quantity and source selection."""
+    from rich.prompt import Prompt
+
+    from msrkit.config import load_protocol
+
+    try:
+        config = load_protocol(protocol_path)
+    except Exception as e:
+        console.print(f"[red]Erro ao carregar protocolo: {e}[/red]")
+        return
+
+    registry = _get_registry()
+
+    console.print("\n[bold cyan]─── 1. Escolha a Fonte para Minerar ───[/bold cyan]")
+    console.print("  [bold cyan]0[/bold cyan] - [bold]Todas as fontes ativadas no protocolo[/bold]")
+
+    sources_options: list[str] = []
+    for idx, (s_name, s_cfg) in enumerate(sorted(config.sources.items()), 1):
+        sources_options.append(s_name)
+        status_label = "[green]● Ativada[/green]" if s_cfg.enabled else "[dim]○ Desativada[/dim]"
+        avail_label = ""
+        if s_name in registry:
+            avail = registry[s_name]().available()
+            if avail.status == "OK":
+                avail_label = "[bold green][API: OK][/bold green]"
+            elif avail.status == "DEGRADED":
+                avail_label = "[yellow][API: Parcial/Faltam Chaves][/yellow]"
+            else:
+                avail_label = "[red][API: Não Suportada][/red]"
+
+        console.print(f"  [cyan]{idx}[/cyan] - {s_name:<14} {status_label:<22} {avail_label}")
+
+    src_choice = Prompt.ask(
+        "\n[bold green]Escolha o número da fonte desejada[/bold green]",
+        default="0",
+    )
+
+    selected_source: str | None = None
+    if src_choice != "0":
+        try:
+            s_idx = int(src_choice)
+            if 1 <= s_idx <= len(sources_options):
+                selected_source = sources_options[s_idx - 1]
+            else:
+                console.print(
+                    "[yellow]Opção inválida, minerando todas as fontes ativadas.[/yellow]"
+                )
+        except ValueError:
+            console.print("[yellow]Entrada inválida, minerando todas as fontes ativadas.[/yellow]")
+
+    console.print("\n[bold cyan]─── 2. Escolha a Quantidade de Itens para Minerar ───[/bold cyan]")
+    console.print("  [cyan]1[/cyan] - ⚡ Teste Rápido (5 itens)")
+    console.print("  [cyan]2[/cyan] - 🔍 Amostra Pequena (20 itens)")
+    console.print("  [cyan]3[/cyan] - 📊 Amostra Média (50 itens)")
+    console.print("  [cyan]4[/cyan] - 🚀 Coleta Ampla (200 itens)")
+    console.print("  [cyan]5[/cyan] - ♾️  Máximo do Protocolo (sem limite rápido)")
+    console.print("  [cyan]6[/cyan] - ✏️  Digitar quantidade personalizada")
+
+    qty_choice = Prompt.ask("\n[bold green]Escolha a opção de quantidade[/bold green]", default="2")
+
+    limit: int | None = 20
+    if qty_choice == "1":
+        limit = 5
+    elif qty_choice == "2":
+        limit = 20
+    elif qty_choice == "3":
+        limit = 50
+    elif qty_choice == "4":
+        limit = 200
+    elif qty_choice == "5":
+        limit = None
+    elif qty_choice == "6":
+        custom = Prompt.ask(
+            "[bold green]Digite a quantidade exata desejada[/bold green]",
+            default="20",
+        )
+        try:
+            limit = max(1, int(custom))
+        except ValueError:
+            limit = 20
+    else:
+        limit = 20
+
+    src_label = selected_source if selected_source else "Todas as fontes ativadas"
+    limit_label = str(limit) if limit is not None else "Ilimitado (máximo do protocolo)"
+    console.print(
+        f"\n[bold green]Iniciando Mineração:[/bold green] "
+        f"Fonte: [bold cyan]{src_label}[/bold cyan] | "
+        f"Limite: [bold cyan]{limit_label}[/bold cyan]\n"
+    )
+
+    try:
+        run(protocol=protocol_path, source=selected_source, limit=limit, verbose=False)
+    except Exception as e:
+        console.print(f"[red]Erro durante a coleta: {e}[/red]")
+        return
+
+    console.print()
+    auto_export = Prompt.ask(
+        "[bold cyan]Deseja desduplicar e exportar para CSV agora mesmo?[/bold cyan] [S/n]",
+        default="S",
+    )
+    if auto_export.strip().lower() in ("s", "sim", "y", "yes", ""):
+        console.print("\n[bold]1. Desduplicando itens coletados...[/bold]")
+        dedupe(run_id=None, verbose=False)
+        console.print("\n[bold]2. Exportando para CSV...[/bold]")
+        export(
+            run_id=None,
+            fmt="csv",
+            include_body=False,
+            output="data/resultados.csv",
+            verbose=False,
+        )
+        console.print("\n[bold green]✓ Processamento concluído com sucesso![/bold green]")
+        console.print("[dim]Planilha salva em: data/resultados.csv[/dim]")
+
+
 @app.command(name="menu")
 def menu() -> None:
     """Interactive terminal menu to navigate MSR-Kit easily."""
@@ -819,15 +1064,22 @@ def menu() -> None:
             )
         )
         console.print("\n[bold]Escolha uma ação:[/bold]")
-        console.print("  [cyan]1[/cyan] - Status das fontes e APIs ([dim]sources[/dim])")
-        console.print("  [cyan]2[/cyan] - Coleta rápida no Hacker News (5 itens)")
-        console.print("  [cyan]3[/cyan] - Coleta rápida no dev.to (5 itens)")
-        console.print("  [cyan]4[/cyan] - Coleta rápida nos feeds RSS de IA (5 itens)")
-        console.print("  [cyan]5[/cyan] - Simulação de planejamento / Dry-Run ([dim]plan[/dim])")
-        console.print("  [cyan]6[/cyan] - Desduplicar última coleta ([dim]dedupe[/dim])")
-        console.print("  [cyan]7[/cyan] - Exportar última coleta em CSV ([dim]export -f csv[/dim])")
-        console.print("  [cyan]8[/cyan] - Estatísticas da última coleta ([dim]stats[/dim])")
-        console.print("  [cyan]9[/cyan] - Validar arquivo de protocolo ([dim]validate[/dim])")
+        console.print(
+            "  [bold cyan]1[/bold cyan] - [bold]🎯 Iniciar Mineração[/bold] "
+            "([dim]escolher fonte e quantidade flexível[/dim])"
+        )
+        console.print(
+            "  [bold cyan]2[/bold cyan] - [bold]⚙️  Gerenciar Fontes[/bold] "
+            "([dim]ativar/desativar com base na disponibilidade[/dim])"
+        )
+        console.print(
+            "  [cyan]3[/cyan] - Status detalhado das fontes e políticas ([dim]sources[/dim])"
+        )
+        console.print("  [cyan]4[/cyan] - Simulação de planejamento / Dry-Run ([dim]plan[/dim])")
+        console.print("  [cyan]5[/cyan] - Desduplicar última coleta ([dim]dedupe[/dim])")
+        console.print("  [cyan]6[/cyan] - Exportar última coleta em CSV ([dim]export -f csv[/dim])")
+        console.print("  [cyan]7[/cyan] - Estatísticas da última coleta ([dim]stats[/dim])")
+        console.print("  [cyan]8[/cyan] - Validar arquivo de protocolo ([dim]validate[/dim])")
         console.print("  [cyan]0[/cyan] - Sair")
 
         choice = Prompt.ask("\n[bold green]Digite o número da opção[/bold green]", default="0")
@@ -836,28 +1088,26 @@ def menu() -> None:
             console.print("[dim]Encerrado.[/dim]")
             break
         if choice == "1":
-            sources(md=False, verbose=False)
+            _interactive_mining_menu(DEFAULT_PROTOCOL)
         elif choice == "2":
-            run(protocol=DEFAULT_PROTOCOL, source="hackernews", limit=5)
+            _manage_sources_menu(DEFAULT_PROTOCOL)
         elif choice == "3":
-            run(protocol=DEFAULT_PROTOCOL, source="devto", limit=5)
+            sources(md=False, verbose=False)
         elif choice == "4":
-            run(protocol=DEFAULT_PROTOCOL, source="rss", limit=5)
-        elif choice == "5":
             plan(protocol=DEFAULT_PROTOCOL, source=None, verbose=False)
-        elif choice == "6":
+        elif choice == "5":
             dedupe(run_id=None, verbose=False)
-        elif choice == "7":
+        elif choice == "6":
             export(
                 run_id=None,
                 fmt="csv",
                 include_body=False,
-                output="resultados.csv",
+                output="data/resultados.csv",
                 verbose=False,
             )
-        elif choice == "8":
+        elif choice == "7":
             stats(run_id=None, verbose=False)
-        elif choice == "9":
+        elif choice == "8":
             validate(protocol=DEFAULT_PROTOCOL, verbose=False)
         else:
             console.print("[red]Opção inválida![/red]")
