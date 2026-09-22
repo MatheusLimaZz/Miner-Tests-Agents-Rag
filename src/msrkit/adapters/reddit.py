@@ -175,14 +175,14 @@ class RedditAdapter(BaseAdapter):
                     break
 
                 data = resp.json()
-                children = data.get("data", {}).get("children", [])
+                children = (data.get("data") or {}).get("children") or []
                 if not children:
                     break
 
                 for child in children:
                     if total_yielded >= limit:
                         return
-                    post = child.get("data", {})
+                    post = child.get("data") or {}
                     yield self._make_raw_item(
                         source=self.name,
                         native_id=post.get("id", ""),
@@ -190,7 +190,7 @@ class RedditAdapter(BaseAdapter):
                     )
                     total_yielded += 1
 
-                after = data.get("data", {}).get("after")
+                after = (data.get("data") or {}).get("after")
                 if not after:
                     break
 
@@ -209,7 +209,10 @@ class RedditAdapter(BaseAdapter):
             body=p.get("selftext"),
             tags=[subreddit] if subreddit else [],
         )
-        url = f"https://www.reddit.com{p.get('permalink', '')}"
+        permalink = p.get("permalink") or f"/r/{subreddit}/comments/{p.get('id', '')}"
+        if not permalink.startswith("/"):
+            permalink = f"/{permalink}"
+        url = f"https://www.reddit.com{permalink}"
 
         return Item(
             id=Item.make_id(self.name, p.get("id", "")),

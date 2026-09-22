@@ -175,14 +175,14 @@ class BlueskyAdapter(BaseAdapter):
     def normalize(self, raw: RawItem, terms: list[str] | None = None) -> Item:
         """Convert Bluesky post to canonical Item."""
         p = raw.payload
-        record = p.get("record", {})
+        record = p.get("record") or {}
 
         created_at = None
         if record.get("createdAt"):
             with contextlib.suppress(ValueError, TypeError):
                 created_at = datetime.fromisoformat(record["createdAt"].replace("Z", "+00:00"))
 
-        author = p.get("author", {})
+        author = p.get("author") or {}
         handle = author.get("handle", "")
 
         text = record.get("text", "")
@@ -190,7 +190,12 @@ class BlueskyAdapter(BaseAdapter):
 
         # Convert AT URI to web URL
         # at://did:plc:xxx/app.bsky.feed.post/yyy → https://bsky.app/profile/handle/post/yyy
-        url = f"https://bsky.app/profile/{handle}/post/{uri.split('/')[-1]}" if uri else ""
+        if uri and handle:
+            url = f"https://bsky.app/profile/{handle}/post/{uri.split('/')[-1]}"
+        elif handle:
+            url = f"https://bsky.app/profile/{handle}"
+        else:
+            url = f"https://bsky.app/post/{raw.native_id or 'unknown'}"
 
         matched = match_terms(terms or [], title=None, body=text)
 

@@ -318,6 +318,48 @@ class TestCliCommands:
         matched_term_names = [t.term for t in items[0].matched_terms]
         assert "RAG testing" in matched_term_names
 
+    def test_normalize_idempotent(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Running normalize multiple times must overwrite, not append duplicate items."""
+        monkeypatch.setattr("msrkit.cli.DATA_DIR", tmp_path)
+        run_id = "test-normalize-idempotent"
+        raw_storage = RawStorage(tmp_path)
+        raw = RawItem(
+            source="hackernews",
+            native_id="111",
+            payload={
+                "objectID": "111",
+                "title": "Item title",
+                "created_at_i": 1700000000,
+                "_tags": ["story"],
+            },
+            fetched_at=datetime(2024, 6, 1, tzinfo=UTC),
+        )
+        raw_storage.save_raw(raw, run_id, "part1")
+        manifest = Manifest(
+            run_id=run_id,
+            msrkit_version="0.1.0",
+            protocol_path="protocols/v0_rag_agents_testing.yaml",
+            protocol_sha256="abc",
+            started_at=datetime.now(UTC),
+            sources=[
+                SourceManifestEntry(
+                    name="hackernews",
+                    adapter_version="0.1.0",
+                    availability=Availability(status=AvailabilityStatus.OK, reason="OK"),
+                )
+            ],
+        )
+        save_manifest(manifest, tmp_path)
+
+        res1 = runner.invoke(app, ["normalize", "--run", run_id])
+        assert res1.exit_code == 0
+        res2 = runner.invoke(app, ["normalize", "--run", run_id])
+        assert res2.exit_code == 0
+
+        item_storage = ItemStorage(tmp_path)
+        items = item_storage.read_items(run_id)
+        assert len(items) == 1
+
     def test_stats_command(
         self, tmp_path: Path, sample_items: list[Item], monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -610,5 +652,3 @@ limits:
         result = runner.invoke(app, ["export", "--run", "run-1", "-f", "csv", "-o", "test.csv"])
         assert result.exit_code == 1
         assert "Permissão negada" in result.stdout
-
-

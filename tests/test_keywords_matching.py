@@ -37,6 +37,13 @@ class TestKeywordsMatching:
         hits_negative = match_terms(terms, title="Using courage and brag tactics")
         assert len(hits_negative) == 0
 
+    def test_non_alphanumeric_boundaries(self) -> None:
+        """Terms with symbols like C++, .NET, C# match properly without word-boundary failure."""
+        terms = ["c++", ".NET", "c#"]
+        hits = match_terms(terms, title="Building a C++ parser and a .NET library for C# agents")
+        matched = {h.term for h in hits}
+        assert matched == {"c++", ".NET", "c#"}
+
     def test_case_insensitive_matching(self) -> None:
         """Matching is case-insensitive."""
         terms = ["LLM evaluation"]

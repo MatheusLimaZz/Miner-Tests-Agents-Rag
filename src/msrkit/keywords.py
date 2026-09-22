@@ -16,9 +16,13 @@ def _build_pattern(term: str) -> re.Pattern[str]:
     """Build a regex pattern for a term with word boundaries.
 
     Multi-word terms are matched as exact phrases.
+    Uses word boundaries if the term starts/ends with word characters,
+    or negative lookarounds if boundary characters are non-alphanumeric (e.g. C++, .NET).
     """
     escaped = re.escape(term)
-    return re.compile(rf"\b{escaped}\b", re.IGNORECASE)
+    left = r"\b" if re.match(r"^\w", term) else r"(?<!\w)"
+    right = r"\b" if re.search(r"\w$", term) else r"(?!\w)"
+    return re.compile(rf"{left}{escaped}{right}", re.IGNORECASE)
 
 
 def _extract_context(text: str, match_start: int, match_end: int, window: int = 40) -> str:

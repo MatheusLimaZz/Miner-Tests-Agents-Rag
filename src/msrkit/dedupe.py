@@ -106,13 +106,15 @@ def deduplicate(items: list[Item]) -> tuple[list[Item], list[Item]]:
             continue
         seen_urls.add(canon_url)
 
-        # Pass 2: Content hash
-        c_hash = content_hash(item.title, item.body)
-        if c_hash in seen_hashes:
-            duplicates.append(item)
-            logger.debug("Duplicate content: hash=%s (item %s)", c_hash[:12], item.id)
-            continue
-        seen_hashes.add(c_hash)
+        # Pass 2: Content hash (only when non-empty content exists)
+        has_content = bool((item.title and item.title.strip()) or (item.body and item.body.strip()))
+        if has_content:
+            c_hash = content_hash(item.title, item.body)
+            if c_hash in seen_hashes:
+                duplicates.append(item)
+                logger.debug("Duplicate content: hash=%s (item %s)", c_hash[:12], item.id)
+                continue
+            seen_hashes.add(c_hash)
 
         unique.append(item)
 

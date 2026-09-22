@@ -128,6 +128,34 @@ class TestStorageExtras:
         assert stats_r2.get("github") is None
         storage.close()
 
+    def test_duckdb_ingest_duplicates_count(self, tmp_path: Path) -> None:
+        db_path = tmp_path / "test_dup.duckdb"
+        storage = DuckDBStorage(db_path)
+        item = Item(
+            id=Item.make_id("github", "1"),
+            source="github",
+            kind=ItemKind.REPO,
+            url="https://github.com/org/repo",  # type: ignore[arg-type]
+            title="test repo",
+            provenance=Provenance(
+                run_id="r1",
+                query_string="q",
+                partition="p",
+                adapter="github",
+                adapter_version="0.1",
+                fetched_at=datetime.now(UTC),
+                response_sha256="h",
+                raw_ref="ref",
+            ),
+        )
+        inserted_first = storage.ingest_items([item])
+        assert inserted_first == 1
+
+        # Ingesting the exact same item again should return 0 inserted (INSERT OR IGNORE)
+        inserted_second = storage.ingest_items([item])
+        assert inserted_second == 0
+        storage.close()
+
     def test_raw_storage_partitions_and_read(self, tmp_path: Path) -> None:
         raw_storage = RawStorage(tmp_path)
         raw = RawItem(

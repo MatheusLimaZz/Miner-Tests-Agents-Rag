@@ -208,11 +208,11 @@ class HackerNewsAdapter(BaseAdapter):
         filters: list[str] = []
         if q.since:
             since_ts = int(datetime.combine(q.since, datetime.min.time(), UTC).timestamp())
-            filters.append(f"created_at_i>{since_ts}")
+            filters.append(f"created_at_i>={since_ts}")
         if q.until:
             until_dt = datetime.combine(q.until, datetime.max.time().replace(microsecond=0), UTC)
             until_ts = int(until_dt.timestamp())
-            filters.append(f"created_at_i<{until_ts}")
+            filters.append(f"created_at_i<={until_ts}")
 
         if filters:
             params["numericFilters"] = ",".join(filters)

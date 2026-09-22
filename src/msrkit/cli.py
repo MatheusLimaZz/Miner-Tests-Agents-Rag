@@ -452,7 +452,8 @@ def run(
         for qi, query in enumerate(queries, 1):
             console.print(f"  Query {qi}/{len(queries)}: {query.terms[:3]}...")
             items_collected = 0
-            requests_made = 0
+            raw_items_count = 0
+            req_before = getattr(adapter, "request_count", 0)
             response_hashes: list[str] = []
 
             try:
@@ -465,7 +466,7 @@ def run(
                     ).hexdigest()[:12]
 
                     raw_ref = raw_storage.save_raw(raw_item, run_id, partition_hash)
-                    requests_made += 1
+                    raw_items_count += 1
 
                     # Normalize
                     try:
@@ -507,6 +508,7 @@ def run(
                 console.print(f"  [yellow]Error during collection: {e}[/yellow]")
                 logging.getLogger(__name__).exception("Collection error")
 
+            requests_made = max(getattr(adapter, "request_count", 0) - req_before, 0)
             query_entry = QueryManifestEntry(
                 query_string=" ".join(query.terms),
                 partitions=1,
@@ -516,7 +518,10 @@ def run(
                 response_sha256=response_hashes,
             )
             source_entry.queries.append(query_entry)
-            console.print(f"    Collected: {items_collected} items ({requests_made} raw)")
+            console.print(
+                f"    Collected: {items_collected} items "
+                f"({raw_items_count} raw, {requests_made} requests)"
+            )
 
         adapter.close()
         manifest.sources.append(source_entry)
@@ -573,6 +578,15 @@ def normalize(
     registry = _get_registry()
     raw_storage = RawStorage(DATA_DIR)
     item_storage = ItemStorage(DATA_DIR)
+
+    # Reset existing items file for this run before reprocessing to prevent duplication
+    items_dir = DATA_DIR / "items" / run_id
+    items_file = items_dir / "items.jsonl"
+    if items_file.exists():
+        items_file.unlink()
+    deduped_file = items_dir / "items_deduped.jsonl"
+    if deduped_file.exists():
+        deduped_file.unlink()
 
     total_items = 0
     for source_entry in manifest.sources:
@@ -980,9 +994,7 @@ def export(
                         else ""
                     )
                     row["tags"] = (
-                        ", ".join(item.tech.tags)
-                        if (item.tech and item.tech.tags)
-                        else ""
+                        ", ".join(item.tech.tags) if (item.tech and item.tech.tags) else ""
                     )
                     writer.writerow({k: row.get(k) for k in fields})
         elif fmt == "duckdb":

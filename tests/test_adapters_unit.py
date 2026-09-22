@@ -520,9 +520,7 @@ class TestSearchLoopsAndQueryBuilding:
         assert params.get("q") == "rag"
         assert "tagged" not in params
 
-    def test_stackexchange_tags_search_without_terms(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_stackexchange_tags_search_without_terms(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """When terms is empty, tags are queried individually."""
         adapter = StackExchangeAdapter()
         captured_params: list[dict[str, Any]] = []
@@ -665,3 +663,91 @@ class TestSearchLoopsAndQueryBuilding:
         raw_items = list(adapter.search(q))
         assert len(raw_items) == 1
         assert raw_items[0].native_id == "at://did:plc:1/app.bsky.feed.post/1"
+
+    def test_devto_until_upper_bound_filtering(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """dev.to search skips articles newer than q.until."""
+        from datetime import date
+
+        adapter = DevToAdapter()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = [
+            {"id": 1, "published_at": "2026-05-01T00:00:00Z", "title": "RAG new"},
+            {"id": 2, "published_at": "2023-06-01T00:00:00Z", "title": "RAG in-range"},
+            {"id": 3, "published_at": "2020-01-01T00:00:00Z", "title": "RAG old"},
+        ]
+        monkeypatch.setattr(adapter, "_governed_get", lambda *args, **kwargs: mock_resp)
+
+        q = Query(
+            source="devto",
+            terms=["rag"],
+            since=date(2023, 1, 1),
+            until=date(2023, 12, 31),
+            extra={"tags": ["rag"]},
+            limit=10,
+        )
+        raw_items = list(adapter.search(q))
+        # Item 1 is skipped (too new), item 2 is kept, item 3 triggers early stop
+        assert len(raw_items) == 1
+        assert raw_items[0].native_id == "2"
+
+    def test_github_deleted_user_resilience(self) -> None:
+        """GitHub normalization does not crash when user/owner is null (deleted accounts)."""
+        adapter = GitHubAdapter()
+        raw_issue = RawItem(
+            source="github",
+            native_id="123",
+            payload={
+                "_search_kind": "issue",
+                "id": 123,
+                "title": "Bug with deleted user",
+                "html_url": "https://github.com/org/repo/issues/123",
+                "user": None,  # Deleted user
+                "reactions": None,
+                "labels": None,
+            },
+            fetched_at=datetime.now(UTC),
+        )
+        item = adapter.normalize(raw_issue)
+        assert item.author_handle is None
+        assert item.engagement.reactions is None
+
+    def test_rss_fallback_url_when_link_missing(self) -> None:
+        """RSS normalization creates a valid HttpUrl when link is missing."""
+        adapter = RSSAdapter()
+        raw = RawItem(
+            source="rss",
+            native_id="entry-99",
+            payload={"title": "Missing link", "link": "", "feed_url": "https://blog.com/feed"},
+            fetched_at=datetime.now(UTC),
+        )
+        item = adapter.normalize(raw)
+        assert str(item.url) == "https://blog.com/feed"
+
+    def test_hackernews_inclusive_numeric_filters(self) -> None:
+        """HackerNews numericFilters use inclusive >= and <= bounds."""
+        from datetime import date
+
+        adapter = HackerNewsAdapter()
+        q = Query(
+            source="hackernews",
+            terms=["rag"],
+            since=date(2024, 1, 1),
+            until=date(2024, 1, 31),
+        )
+        params = adapter._build_params(q)
+        filters = params.get("numericFilters", "")
+        assert "created_at_i>=" in filters
+        assert "created_at_i<=" in filters
+
+    def test_huggingface_dataset_and_space_urls(self) -> None:
+        """HuggingFace adapter formats URLs properly for datasets and spaces."""
+        adapter = HuggingFaceAdapter()
+        raw_dataset = RawItem(
+            source="huggingface",
+            native_id="user/rag-data",
+            payload={"id": "user/rag-data", "_hf_kind": "datasets"},
+            fetched_at=datetime.now(UTC),
+        )
+        item = adapter.normalize(raw_dataset)
+        assert str(item.url) == "https://huggingface.co/datasets/user/rag-data"

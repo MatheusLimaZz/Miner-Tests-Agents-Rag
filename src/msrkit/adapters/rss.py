@@ -112,7 +112,10 @@ class RSSAdapter(BaseAdapter):
                     "summary": entry.get("summary", ""),
                     "published": entry.get("published", ""),
                     "author": entry.get("author", ""),
-                    "tags": [t.get("term", "") for t in entry.get("tags", [])],
+                    "tags": [
+                        t.get("term", "") if isinstance(t, dict) else str(t)
+                        for t in (entry.get("tags") or [])
+                    ],
                     "feed_url": feed_url,
                 }
 
@@ -136,17 +139,18 @@ class RSSAdapter(BaseAdapter):
             except (ValueError, TypeError):
                 pass
 
-        tags = p.get("tags", [])
+        tags = p.get("tags") or []
         if isinstance(tags, str):
             tags = [tags]
 
         matched = match_terms(terms or [], title=p.get("title"), body=p.get("summary"), tags=tags)
+        url = p.get("link") or p.get("feed_url") or f"https://feed.local/{raw.native_id}"
 
         return Item(
             id=Item.make_id(self.name, str(raw.native_id)),
             source=self.name,
             kind=ItemKind.ARTICLE,
-            url=p.get("link", ""),  # type: ignore[arg-type]
+            url=url,  # type: ignore[arg-type]
             title=p.get("title"),
             body=None,  # metadata_only
             author_handle=p.get("author"),

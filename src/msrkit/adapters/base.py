@@ -61,6 +61,11 @@ class BaseAdapter(ABC):
         self._request_count = 0
 
     @property
+    def request_count(self) -> int:
+        """Total number of HTTP requests executed by this adapter instance."""
+        return self._request_count
+
+    @property
     def client(self) -> httpx.Client:
         """Lazy-initialized httpx client with default timeout."""
         if self._client is None:

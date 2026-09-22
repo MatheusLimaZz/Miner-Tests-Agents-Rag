@@ -229,7 +229,7 @@ class GitHubAdapter(BaseAdapter):
             url=p.get("html_url", ""),  # type: ignore[arg-type]
             title=p.get("full_name"),
             body=p.get("description"),
-            author_handle=p.get("owner", {}).get("login"),
+            author_handle=(p.get("owner") or {}).get("login"),
             created_at=created_at,
             updated_at=updated_at,
             engagement=Engagement(
@@ -239,7 +239,11 @@ class GitHubAdapter(BaseAdapter):
             ),
             tech=TechContext(
                 language=p.get("language"),
-                license=p.get("license", {}).get("spdx_id") if p.get("license") else None,
+                license=(
+                    (p.get("license") or {}).get("spdx_id")
+                    if isinstance(p.get("license"), dict)
+                    else None
+                ),
                 tags=topics,
             ),
             matched_terms=matched,
@@ -258,7 +262,7 @@ class GitHubAdapter(BaseAdapter):
     def _normalize_code(
         self, p: dict[str, Any], raw: RawItem, terms: list[str] | None = None
     ) -> Item:
-        repo = p.get("repository", {})
+        repo = p.get("repository") or {}
         matched = match_terms(terms or [], title=p.get("name"), path=p.get("path"))
 
         return Item(
@@ -268,7 +272,7 @@ class GitHubAdapter(BaseAdapter):
             url=p.get("html_url", ""),  # type: ignore[arg-type]
             title=p.get("name"),
             body=None,  # metadata_only
-            author_handle=repo.get("owner", {}).get("login"),
+            author_handle=(repo.get("owner") or {}).get("login"),
             engagement=Engagement(),
             tech=TechContext(
                 language=repo.get("language"),
@@ -292,7 +296,10 @@ class GitHubAdapter(BaseAdapter):
     ) -> Item:
         created_at = self._parse_dt(p.get("created_at"))
         updated_at = self._parse_dt(p.get("updated_at"))
-        labels = [label.get("name", "") for label in p.get("labels", [])]
+        labels = [
+            label.get("name", "") if isinstance(label, dict) else str(label)
+            for label in (p.get("labels") or [])
+        ]
 
         matched = match_terms(terms or [], title=p.get("title"), body=p.get("body"), tags=labels)
 
@@ -303,12 +310,12 @@ class GitHubAdapter(BaseAdapter):
             url=p.get("html_url", ""),  # type: ignore[arg-type]
             title=p.get("title"),
             body=p.get("body"),
-            author_handle=p.get("user", {}).get("login"),
+            author_handle=(p.get("user") or {}).get("login"),
             created_at=created_at,
             updated_at=updated_at,
             engagement=Engagement(
                 comments=p.get("comments"),
-                reactions=p.get("reactions", {}).get("total_count"),
+                reactions=(p.get("reactions") or {}).get("total_count"),
             ),
             tech=TechContext(tags=labels),
             matched_terms=matched,

@@ -115,6 +115,16 @@ class TestDeduplicate:
         assert len(unique1) == len(unique2)
         assert len(dupes2) == 0
 
+    def test_dedupe_items_without_content_not_colliding(self) -> None:
+        """Items with no title and no body must not collide on empty string content hash."""
+        items = [
+            _make_item("1", "https://github.com/org1/file1.py", title="", body=None),
+            _make_item("2", "https://github.com/org2/file2.py", title="", body=None),
+        ]
+        unique, dupes = deduplicate(items)
+        assert len(unique) == 2
+        assert len(dupes) == 0
+
 
 # ---------------------------------------------------------------------------
 # Helpers

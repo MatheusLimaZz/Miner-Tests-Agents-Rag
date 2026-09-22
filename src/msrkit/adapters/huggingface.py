@@ -153,7 +153,13 @@ class HuggingFaceAdapter(BaseAdapter):
         updated_at = self._parse_dt(p.get("lastModified"))
 
         tags = p.get("tags", [])
-        url = f"https://huggingface.co/{item_id}"
+        hf_kind = p.get("_hf_kind", "models")
+        if hf_kind == "datasets":
+            url = f"https://huggingface.co/datasets/{item_id}"
+        elif hf_kind == "spaces":
+            url = f"https://huggingface.co/spaces/{item_id}"
+        else:
+            url = f"https://huggingface.co/{item_id}"
 
         matched = match_terms(
             terms or [],

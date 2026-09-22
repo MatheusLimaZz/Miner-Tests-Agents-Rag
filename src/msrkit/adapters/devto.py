@@ -124,10 +124,13 @@ class DevToAdapter(BaseAdapter):
                         return
 
                     pub_str = article.get("published_at") or article.get("created_at")
-                    if q.since and pub_str:
+                    if pub_str and (q.since or q.until):
                         try:
                             pub_dt = datetime.fromisoformat(pub_str.replace("Z", "+00:00"))
-                            if pub_dt.date() < q.since:
+                            pub_date = pub_dt.date()
+                            if q.until and pub_date > q.until:
+                                continue
+                            if q.since and pub_date < q.since:
                                 hit_older_than_since = True
                                 break
                         except (ValueError, TypeError):

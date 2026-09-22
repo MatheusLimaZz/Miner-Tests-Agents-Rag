@@ -234,7 +234,7 @@ class DuckDBStorage:
             Number of items inserted.
         """
         con = self._connect()
-        inserted = 0
+        count_before = con.execute("SELECT count(*) FROM items").fetchone()[0]  # type: ignore[union-attr]
         for item in items:
             try:
                 data = item.model_dump(mode="json")
@@ -267,10 +267,10 @@ class DuckDBStorage:
                         data_json,
                     ],
                 )
-                inserted += 1
             except Exception as e:
                 logger.warning("Failed to insert item %s: %s", item.id, e)
-        return inserted
+        count_after = con.execute("SELECT count(*) FROM items").fetchone()[0]  # type: ignore[union-attr]
+        return int(count_after - count_before)
 
     def stats(self, run_id: str | None = None) -> dict[str, int]:
         """Get item counts by source.

@@ -214,7 +214,7 @@ class StackExchangeAdapter(BaseAdapter):
             url=url,  # type: ignore[arg-type]
             title=p.get("title"),
             body=p.get("body"),
-            author_handle=p.get("owner", {}).get("display_name"),
+            author_handle=(p.get("owner") or {}).get("display_name"),
             created_at=created_at,
             updated_at=updated_at,
             engagement=Engagement(
