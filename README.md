@@ -11,6 +11,8 @@ O **MSR-Kit** é uma ferramenta de linha de comando científica que coleta, norm
 
 Ele foi construído especialmente para apoiar pesquisas acadêmicas (MSR/SLR) que catalogam **ferramentas e métodos de teste** para **sistemas LLM com RAG** e **sistemas baseados em agentes**.
 
+> 📖 **Documentação Aprofundada:** Para arquitetura interna detalhada, diagramas de fluxo de dados, especificações de modelos e guias de extensão, consulte o [**Manual Técnico Completo (docs/manual.md)**](docs/manual.md).
+
 ---
 
 ## 📑 Sumário
