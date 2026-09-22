@@ -761,6 +761,12 @@ def export(
         False, "--all", "-a", help="Consolidate and export items from all historical runs"
     ),
     fmt: str = typer.Option("jsonl", "--format", "-f", help="Output format: csv, jsonl, duckdb"),
+    delimiter: str = typer.Option(
+        ";",
+        "--delimiter",
+        "-d",
+        help="Delimiter for CSV export (default ';' for Excel compatibility, or ',')",
+    ),
     include_body: bool = typer.Option(False, "--include-body", help="Include body text in export"),
     output: str | None = typer.Option(None, "--output", "-o", help="Output file path"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
@@ -769,6 +775,7 @@ def export(
     run_id = _unwrap(run_id)
     all_runs = _unwrap(all_runs)
     fmt = _unwrap(fmt)
+    delimiter = _unwrap(delimiter)
     include_body = _unwrap(include_body)
     output = _unwrap(output)
     verbose = _unwrap(verbose)
@@ -851,8 +858,10 @@ def export(
         if include_body:
             fields.append("body")
 
-        with open(out_path, "w", encoding="utf-8", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
+        with open(out_path, "w", encoding="utf-8-sig", newline="") as f:
+            writer = csv.DictWriter(
+                f, fieldnames=fields, delimiter=delimiter, extrasaction="ignore"
+            )
             writer.writeheader()
             for item in items:
                 row = item.model_dump(mode="json")

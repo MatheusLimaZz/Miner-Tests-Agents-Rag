@@ -216,9 +216,38 @@ class TestCliCommands:
         assert result.exit_code == 0
         assert out_file.exists()
 
-        content = out_file.read_text(encoding="utf-8")
+        content = out_file.read_text(encoding="utf-8-sig")
         header = content.splitlines()[0]
-        assert "body" not in header.split(",")
+        assert "body" not in header.split(";")
+        assert "id" in header.split(";")
+
+    def test_export_csv_custom_delimiter(
+        self, tmp_path: Path, sample_items: list[Item], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """msrkit export respects custom delimiter like comma."""
+        monkeypatch.setattr("msrkit.cli.DATA_DIR", tmp_path)
+        storage = ItemStorage(tmp_path)
+        storage.save_items(sample_items, "run-export-delim")
+
+        out_file = tmp_path / "test_delim.csv"
+        result = runner.invoke(
+            app,
+            [
+                "export",
+                "--run",
+                "run-export-delim",
+                "--format",
+                "csv",
+                "--delimiter",
+                ",",
+                "-o",
+                str(out_file),
+            ],
+        )
+        assert result.exit_code == 0
+        content = out_file.read_text(encoding="utf-8-sig")
+        header = content.splitlines()[0]
+        assert "id" in header.split(",")
 
     def test_export_duckdb(
         self, tmp_path: Path, sample_items: list[Item], monkeypatch: pytest.MonkeyPatch
@@ -473,7 +502,7 @@ limits:
         assert result.exit_code == 0
         assert "Consolidating items from 2 historical runs" in result.stdout
         assert out_file.exists()
-        lines = out_file.read_text(encoding="utf-8").strip().splitlines()
+        lines = out_file.read_text(encoding="utf-8-sig").strip().splitlines()
         # Header + 2 unique items
         assert len(lines) == 3
 
