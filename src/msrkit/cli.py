@@ -13,8 +13,10 @@ Commands:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
+import shutil
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -950,6 +952,7 @@ def export(
     ),
     include_body: bool = typer.Option(False, "--include-body", help="Include body text in export"),
     output: str | None = typer.Option(None, "--output", "-o", help="Output file path"),
+    raw: bool = typer.Option(False, "--raw", help="Export raw items instead of deduplicated items"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
     """Export collected items."""
@@ -959,6 +962,7 @@ def export(
     delimiter = _unwrap(delimiter)
     include_body = _unwrap(include_body)
     output = _unwrap(output)
+    raw = _unwrap(raw)
     verbose = _unwrap(verbose)
     _setup_logging(verbose)
 
@@ -974,14 +978,18 @@ def export(
         console.print(f"[bold]Consolidating items from {len(runs)} historical runs...[/bold]")
         all_items = []
         for r in runs:
-            all_items.extend(item_storage.read_items(r, prefer_deduped=True))
-        from msrkit.dedupe import deduplicate
+            all_items.extend(item_storage.read_items(r, prefer_deduped=not raw))
+        if not raw:
+            from msrkit.dedupe import deduplicate
 
-        items, dups = deduplicate(all_items)
-        console.print(
-            f"  [green]Total consolidado:[/green] {len(items)} únicos "
-            f"([dim]{len(dups)} duplicatas removidas[/dim])"
-        )
+            items, dups = deduplicate(all_items)
+            console.print(
+                f"  [green]Total consolidado:[/green] {len(items)} únicos "
+                f"([dim]{len(dups)} duplicatas removidas[/dim])"
+            )
+        else:
+            items = all_items
+            console.print(f"  [green]Total consolidado bruto:[/green] {len(items)} achados")
         target_name = "consolidated"
     else:
         if not run_id:
@@ -990,7 +998,7 @@ def export(
                 console.print("[red]✗ No runs found in data directory.[/red]")
                 raise typer.Exit(1)
             console.print(f"[dim]Auto-selected latest run:[/dim] [cyan]{run_id}[/cyan]")
-        items = item_storage.read_items(run_id, prefer_deduped=True)
+        items = item_storage.read_items(run_id, prefer_deduped=not raw)
         target_name = run_id
 
     if not items:
@@ -1320,24 +1328,67 @@ def _interactive_mining_menu(protocol_path: str) -> None:  # pragma: no cover
         console.print(f"[red]Erro durante a coleta: {e}[/red]")
         return
 
-    console.print()
-    auto_export = Prompt.ask(
-        "[bold cyan]Deseja desduplicar e exportar para CSV agora mesmo?[/bold cyan] [S/n]",
-        default="S",
+    latest_run = _get_latest_run_id()
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    raw_csv = f"data/resultados_{timestamp}_brutos.csv"
+    latest_csv = "data/resultados.csv"
+
+    console.print("\n[bold cyan]─── 3. Gerando Planilha Preliminar dos Achados ───[/bold cyan]")
+    export(
+        run_id=latest_run,
+        fmt="csv",
+        include_body=False,
+        output=raw_csv,
+        raw=True,
+        verbose=False,
     )
-    if auto_export.strip().lower() in ("s", "sim", "y", "yes", ""):
+    with contextlib.suppress(Exception):
+        shutil.copyfile(raw_csv, latest_csv)
+
+    console.print(
+        f"[bold green]✓ Planilha de achados brutos gerada:[/bold green] "
+        f"[bold cyan]{raw_csv}[/bold cyan]"
+    )
+    console.print(
+        f"[dim](Uma cópia de referência rápida também foi salva em: {latest_csv})[/dim]"
+    )
+
+    console.print()
+    do_dedupe = Prompt.ask(
+        "[bold cyan]Deseja executar a desduplicação agora e gerar também "
+        "a planilha desduplicada?[/bold cyan] [s/N]",
+        default="N",
+    )
+    if do_dedupe.strip().lower() in ("s", "sim", "y", "yes"):
         console.print("\n[bold]1. Desduplicando itens coletados...[/bold]")
-        dedupe(run_id=None, verbose=False)
-        console.print("\n[bold]2. Exportando para CSV...[/bold]")
+        dedupe(run_id=latest_run, verbose=False)
+        dedup_csv = f"data/resultados_{timestamp}_desduplicados.csv"
+        console.print("\n[bold]2. Exportando planilha desduplicada para CSV...[/bold]")
         export(
-            run_id=None,
+            run_id=latest_run,
             fmt="csv",
             include_body=False,
-            output="data/resultados.csv",
+            output=dedup_csv,
+            raw=False,
             verbose=False,
         )
-        console.print("\n[bold green]✓ Processamento concluído com sucesso![/bold green]")
-        console.print("[dim]Planilha salva em: data/resultados.csv[/dim]")
+        with contextlib.suppress(Exception):
+            shutil.copyfile(dedup_csv, latest_csv)
+        console.print(
+            f"\n[bold green]✓ Planilha desduplicada gerada:[/bold green] "
+            f"[bold cyan]{dedup_csv}[/bold cyan]"
+        )
+        console.print(
+            f"[dim](Referência rápida atualizada com versão desduplicada: {latest_csv})[/dim]"
+        )
+    else:
+        console.print(
+            "[dim]Desduplicação não executada agora. "
+            "Todos os achados brutos continuam preservados.[/dim]"
+        )
+        console.print(
+            "[dim]Dica: Você pode desduplicar a qualquer momento através da opção 5 do menu.[/dim]"
+        )
 
 
 @app.command(name="menu")
@@ -1392,20 +1443,66 @@ def menu() -> None:  # pragma: no cover
                 "Desduplicar [1] Apenas a última coleta ou [2] Todas as coletas históricas?",
                 default="1",
             )
-            dedupe(run_id=None, all_runs=(which == "2"), verbose=False)
+            is_all = (which == "2")
+            dedupe(run_id=None, all_runs=is_all, verbose=False)
+
+            exp_prompt = Prompt.ask(
+                "\n[bold cyan]Deseja exportar a planilha CSV desduplicada agora?[/bold cyan] [S/n]",
+                default="S",
+            )
+            if exp_prompt.strip().lower() in ("s", "sim", "y", "yes", ""):
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                suffix = "consolidado_desduplicado" if is_all else "desduplicados"
+                out_file = f"data/resultados_{timestamp}_{suffix}.csv"
+                export(
+                    run_id=None,
+                    all_runs=is_all,
+                    fmt="csv",
+                    include_body=False,
+                    output=out_file,
+                    raw=False,
+                    verbose=False,
+                )
+                with contextlib.suppress(Exception):
+                    shutil.copyfile(out_file, "data/resultados.csv")
+                console.print(
+                    f"[bold green]✓ Planilha salva em:[/bold green] "
+                    f"[bold cyan]{out_file}[/bold cyan]"
+                )
+                console.print(
+                    "[dim](Cópia de referência rápida atualizada em: data/resultados.csv)[/dim]"
+                )
         elif choice == "6":
             which = Prompt.ask(
                 "Exportar [1] Apenas a última coleta ou [2] Consolidado de todas as coletas?",
                 default="1",
             )
-            out_file = "data/resultados.csv" if which == "1" else "data/resultados_consolidados.csv"
+            is_all = (which == "2")
+            kind_choice = Prompt.ask(
+                "Deseja exportar [1] Versão desduplicada (se existir) ou [2] Versão bruta?",
+                default="1",
+            )
+            is_raw = (kind_choice == "2")
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            suffix_type = "brutos" if is_raw else "desduplicados"
+            suffix_scope = "consolidado" if is_all else "coleta"
+            out_file = f"data/resultados_{timestamp}_{suffix_scope}_{suffix_type}.csv"
             export(
                 run_id=None,
-                all_runs=(which == "2"),
+                all_runs=is_all,
                 fmt="csv",
                 include_body=False,
                 output=out_file,
+                raw=is_raw,
                 verbose=False,
+            )
+            with contextlib.suppress(Exception):
+                shutil.copyfile(out_file, "data/resultados.csv")
+            console.print(
+                f"[bold green]✓ Planilha salva em:[/bold green] [bold cyan]{out_file}[/bold cyan]"
+            )
+            console.print(
+                "[dim](Cópia de referência rápida atualizada em: data/resultados.csv)[/dim]"
             )
         elif choice == "7":
             which = Prompt.ask(

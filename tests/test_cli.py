@@ -631,6 +631,36 @@ limits:
         # Header + 2 unique items
         assert len(lines) == 3
 
+    def test_export_raw_flag(
+        self, tmp_path: Path, sample_items: list[Item], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """msrkit export --raw exports raw items even if deduped items exist."""
+        monkeypatch.setattr("msrkit.cli.DATA_DIR", tmp_path)
+        storage = ItemStorage(tmp_path)
+        # sample_items[:2] has 2 items (one is duplicate of the other)
+        storage.save_items(sample_items[:2], "run-raw-test")
+        # Run dedupe to create items_deduped.jsonl (1 unique item)
+        result_dedupe = runner.invoke(app, ["dedupe", "--run", "run-raw-test"])
+        assert result_dedupe.exit_code == 0
+
+        # Export with --raw should have both 2 items (header + 2 = 3 lines)
+        raw_out = tmp_path / "raw.csv"
+        res_raw = runner.invoke(
+            app, ["export", "--run", "run-raw-test", "-f", "csv", "--raw", "-o", str(raw_out)]
+        )
+        assert res_raw.exit_code == 0
+        raw_lines = raw_out.read_text(encoding="utf-8-sig").strip().splitlines()
+        assert len(raw_lines) == 3
+
+        # Default export (without --raw) should have 1 item (header + 1 = 2 lines)
+        dedup_out = tmp_path / "dedup.csv"
+        res_dedup = runner.invoke(
+            app, ["export", "--run", "run-raw-test", "-f", "csv", "-o", str(dedup_out)]
+        )
+        assert res_dedup.exit_code == 0
+        dedup_lines = dedup_out.read_text(encoding="utf-8-sig").strip().splitlines()
+        assert len(dedup_lines) == 2
+
     def test_direct_python_run_call(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Calling run(...) directly from Python unwraps Typer defaults properly."""
         monkeypatch.setattr("msrkit.cli.DATA_DIR", tmp_path)

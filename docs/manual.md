@@ -203,7 +203,7 @@ Escolha uma ação:
 ### Explicação Detalhada das Opções:
 
 - **`1` - 🎯 Iniciar Mineração:**
-  Exibe a lista das fontes habilitadas no protocolo e permite escolher se deseja coletar de **Todas as fontes** ou de uma **Fonte específica** (ex: `hackernews`, `devto`, `rss`, `github`). Em seguida, solicita a quantidade limite de itens (ou Enter para coletar tudo da janela temporal). Executa a coleta, grava os dados brutos e normalizados e exibe o resumo final com tempo de execução.
+  Exibe a lista das fontes habilitadas no protocolo e permite escolher se deseja coletar de **Todas as fontes** ou de uma **Fonte específica** (ex: `hackernews`, `devto`, `rss`, `github`). Em seguida, solicita a quantidade limite de itens (ou Enter para coletar tudo da janela temporal). Executa a coleta, grava os dados brutos e normalizados, e **gera imediatamente a planilha com todos os achados brutos** (com timestamp, ex: `data/resultados_YYYYMMDD_HHMMSS_brutos.csv`, além de cópia em `data/resultados.csv`). Logo em seguida, oferece a opção opcional de rodar a desduplicação para gerar também a planilha desduplicada (`data/resultados_YYYYMMDD_HHMMSS_desduplicados.csv`), permitindo comparar o antes e depois.
 
 - **`2` - ⚙️ Gerenciar Fontes:**
   Permite ativar ou desativar rapidamente fontes específicas dentro do protocolo YAML. Ideal quando uma fonte precisa ser temporariamente desabilitada por ausência de chave de API ou manutenção do serviço.
@@ -215,10 +215,10 @@ Escolha uma ação:
   Lê o protocolo e as datas configuradas e calcula previamente quantas partições serão necessárias e quantas requisições de rede serão consumidas, permitindo dimensionar a coleta antes de realizá-la.
 
 - **`5` - Desduplicar última coleta (`dedupe`):**
-  Aplica as regras de canonicalização de URL e hash de conteúdo. Oferece a escolha de desduplicar apenas a última coleta ou o histórico consolidado de coletas anteriores.
+  Aplica as regras de canonicalização de URL e hash de conteúdo. Oferece a escolha de desduplicar apenas a última coleta ou o histórico consolidado de coletas anteriores, com opção de exportar o CSV desduplicado imediatamente.
 
 - **`6` - Exportar última coleta em CSV (`export -f csv`):**
-  Gera a planilha final pronta para abertura no Excel, Google Sheets, R ou Python (Pandas). Salva por padrão em `data/resultados.csv` (ou `data/resultados_consolidados.csv`).
+  Gera a planilha pronta para análise no Excel, Google Sheets ou Pandas. Permite escolher entre a **versão desduplicada** ou a **versão bruta** (achados integrais), salvando com timestamp histórico em `data/resultados_YYYYMMDD_HHMMSS_...csv` e mantendo `data/resultados.csv` atualizado para conveniência.
 
 - **`7` - Estatísticas da última coleta (`stats`):**
   Gera o relatório com o número total de itens, descartes por falta de termos, tempo de processamento e requisições gastas.
