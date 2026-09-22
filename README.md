@@ -67,66 +67,52 @@ docker compose create msrkit
 
 ### 🚀 Formas de Executar a Aplicação
 
-Você pode escolher a forma que achar mais conveniente:
+Você pode escolher a forma mais adequada ao seu fluxo de trabalho:
 
-#### Forma 1: Pelo Terminal (Container Único / Mais Rápido) ⭐ *Recomendada*
-Para usar o container fixo que você criou sem recriar novos containers toda vez:
+#### Opção 1: Terminal Interativo no Container (Recomendada) ⭐
+Para usar o container fixo sem precisar recriar imagens a cada comando:
 
 ```bash
 docker start -ai msrkit
 ```
-- **Início instantâneo (< 1 segundo):** "Acorda" o container existente e entra diretamente no terminal Linux bash (`root@...:/app# `).
-- Lá de dentro você pode rodar comandos diretamente (`msrkit`, `msrkit sources`, `msrkit run ...`) ou abrir o menu visual digitando:
+- **Início instantâneo (< 1 segundo):** "Acorda" o container existente e entra diretamente no terminal do ambiente Linux (`root@...:/app# `).
+- Lá dentro, você pode rodar qualquer comando normalmente sem o prefixo do Docker:
   ```bash
+  # Abrir o assistente visual interativo:
   msrkit menu
+
+  # Ou executar qualquer comando diretamente:
+  msrkit sources
+  msrkit run protocols/v0_rag_agents_testing.yaml --source hackernews --limit 10
   ```
-- **Para sair e desligar o container:** basta digitar `exit`. O container simplesmente dorme (desliga). Nenhum container novo é criado.
+- **Para sair e desligar o container:** basta digitar `exit`. O container é pausado de forma limpa e nenhum container novo é criado.
 
 ---
 
-#### Forma 2: Pela Interface Visual do Docker Desktop (100% sem Terminal) 🖱️
-Se você prefere clicar em vez de usar comandos:
-1. Abra o **Docker Desktop** e vá na aba **Containers** (menu lateral esquerdo).
-2. Localize e clique no container **`msrkit`**.
-3. Se estiver parado, clique no botão **Start / Play (▶)** no canto superior direito.
-4. Clique na aba **Exec** (ou **Terminal**) no topo da janela.
-5. Digite `msrkit menu` e dê Enter. O menu interativo rodará direto na interface visual do Docker!
-
----
-
-#### Forma 3: Entrar no Terminal Linux (Bash) dentro do Container 🐧
-Se você quiser ter uma linha de comando Linux completa dentro do Ubuntu 24.04 para explorar arquivos e rodar comandos manualmente:
+#### Opção 2: Comandos Diretos no Terminal do Host (Automação / Scripts) 💻
+Se você prefere disparar comandos pontuais direto do PowerShell, CMD ou Bash do seu computador sem entrar no container:
 
 ```bash
-docker compose run --rm --entrypoint bash msrkit
-```
-- O seu prompt mudará para: `root@...:/app# `
-- Lá de dentro você pode digitar comandos Linux (`ls`, `pwd`) ou comandos da ferramenta (`msrkit menu`, `msrkit sources`).
-- Para sair e voltar ao Windows, basta digitar: `exit`
+# Abrir o menu interativo diretamente:
+docker compose run --rm msrkit msrkit menu
 
----
-
-#### Forma 4: Comandos Diretos da CLI via Docker (Para Automação / Scripts) 💻
-Se você quiser disparar comandos específicos diretamente pelo Docker (sem abrir menus):
-
-```bash
 # Validar o protocolo sem gastar requisições de rede:
-docker compose run --rm msrkit validate protocols/v0_rag_agents_testing.yaml
+docker compose run --rm msrkit msrkit validate protocols/v0_rag_agents_testing.yaml
 
 # Fazer simulação / orçamento de requisições (Dry Run):
-docker compose run --rm msrkit plan protocols/v0_rag_agents_testing.yaml --source hackernews
+docker compose run --rm msrkit msrkit plan protocols/v0_rag_agents_testing.yaml --source hackernews
 
-# Coletar 10 itens rápidos do Hacker News:
-docker compose run --rm msrkit run protocols/v0_rag_agents_testing.yaml --source hackernews --limit 10
+# Coletar itens de uma fonte:
+docker compose run --rm msrkit msrkit run protocols/v0_rag_agents_testing.yaml --source hackernews --limit 10
 
 # Desduplicar itens coletados:
-docker compose run --rm msrkit dedupe
+docker compose run --rm msrkit msrkit dedupe
 
 # Ver estatísticas da coleta:
-docker compose run --rm msrkit stats
+docker compose run --rm msrkit msrkit stats
 
-# Exportar para planilha CSV (salva direto em data/resultados.csv no Windows):
-docker compose run --rm msrkit export -f csv -o data/resultados.csv
+# Exportar para planilha CSV (salva direto em data/resultados.csv no computador):
+docker compose run --rm msrkit msrkit export -f csv -o data/resultados.csv
 ```
 
 ---
@@ -172,7 +158,8 @@ msrkit --help
 Para quem não quer decorar sintaxe de terminal, o MSR-Kit oferece um menu visual interativo.
 
 Para abrir:
-- **No Docker:** `docker compose run --rm msrkit`
+- **No Docker (dentro do container fixo):** `msrkit menu` (após rodar `docker start -ai msrkit`)
+- **No Docker (direto do terminal do host):** `docker compose run --rm msrkit msrkit menu`
 - **No Python Nativo:** `msrkit menu`
 
 ```text
@@ -182,28 +169,28 @@ Para abrir:
 ╰────────────────────────────────────────────────────────╯
 
 Escolha uma ação:
-  1 - Status das fontes e APIs (sources)
-  2 - Coleta rápida no Hacker News (5 itens)
-  3 - Coleta rápida no dev.to (5 itens)
-  4 - Coleta rápida nos feeds RSS de IA (5 itens)
-  5 - Simulação de planejamento / Dry-Run (plan)
-  6 - Desduplicar última coleta (dedupe)
-  7 - Exportar última coleta em CSV (export -f csv)
-  8 - Estatísticas da última coleta (stats)
-  9 - Validar arquivo de protocolo (validate)
+  1 - 🎯 Iniciar Mineração (escolher fonte e quantidade flexível)
+  2 - ⚙️  Gerenciar Fontes (ativar/desativar com base na disponibilidade)
+  3 - Status detalhado das fontes e políticas (sources)
+  4 - Simulação de planejamento / Dry-Run (plan)
+  5 - Desduplicar última coleta (dedupe)
+  6 - Exportar última coleta em CSV (export -f csv)
+  7 - Estatísticas da última coleta (stats)
+  8 - Validar arquivo de protocolo (validate)
   0 - Sair
 
 Digite o número da opção [0]:
 ```
 
 ### O que cada opção faz:
-- **`1` - Status das fontes:** Mostra uma tabela rica indicando quais fontes estão disponíveis, limites de taxa (rate limits) e se exigem token.
-- **`2`, `3`, `4` - Coletas Rápidas (HN, Dev.to, RSS):** Coleta instantaneamente 5 itens de teste sem precisar configurar nada.
-- **`5` - Dry-Run (Simulação):** Calcula quantas requisições seriam feitas sem gastar cota de rede.
-- **`6` - Desduplicação:** Detecta posts repetidos e URLs equivalentes, gerando um dataset limpo.
-- **`7` - Exportar em CSV:** Gera a planilha `resultados.csv` contendo IDs, títulos, links, autores e datas.
-- **`8` - Estatísticas:** Exibe o total de requisições, tempo e itens coletados no último run.
-- **`9` - Validar protocolo:** Checa a sintaxe do arquivo YAML de pesquisa.
+- **`1` - 🎯 Iniciar Mineração:** Coleta guiada onde você escolhe a fonte (Hacker News, Dev.to, RSS, GitHub, etc.) e define dinamicamente a quantidade de itens a minerar.
+- **`2` - ⚙️ Gerenciar Fontes:** Ativa ou desativa fontes no arquivo de protocolo YAML de acordo com as credenciais disponíveis.
+- **`3` - Status detalhado das fontes:** Exibe a tabela com o status de cada API (OK, DEGRADED, UNSUPPORTED), variáveis de autenticação e limites de taxa (rate limits).
+- **`4` - Dry-Run (Simulação):** Calcula as partições temporais e estimativa de requisições sem gastar cota de rede.
+- **`5` - Desduplicação:** Detecta e remove duplicatas por URL canônica e SimHash (apenas da última coleta ou de todo o histórico acumulado).
+- **`6` - Exportar em CSV:** Exporta os dados minerados para `data/resultados.csv` (última coleta ou histórico consolidado).
+- **`7` - Estatísticas:** Apresenta resumo de requisições, descartes e itens coletados no último run ou corpus consolidado.
+- **`8` - Validar protocolo:** Checa a integridade e sintaxe do arquivo de protocolo de pesquisa sem chamadas de rede.
 - **`0` - Sair:** Encerra a aplicação.
 
 ---
