@@ -677,12 +677,67 @@ def dedupe(
 @app.command()
 def stats(
     run_id: str | None = typer.Option(None, "--run", help="Run ID (defaults to latest)"),
+    all_runs: bool = typer.Option(
+        False, "--all", "-a", help="Show consolidated corpus statistics across all historical runs"
+    ),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
-    """Show collection statistics for a run."""
+    """Show collection statistics for a run or the consolidated corpus."""
     run_id = _unwrap(run_id)
+    all_runs = _unwrap(all_runs)
     verbose = _unwrap(verbose)
     _setup_logging(verbose)
+
+    from msrkit.storage import ItemStorage
+
+    item_storage = ItemStorage(DATA_DIR)
+
+    if all_runs:
+        runs = item_storage.list_runs()
+        if not runs:
+            console.print("[red]✗ No runs found in data directory.[/red]")
+            raise typer.Exit(1)
+
+        from msrkit.dedupe import deduplicate
+
+        all_items = []
+        for r in runs:
+            all_items.extend(item_storage.read_items(r, prefer_deduped=True))
+
+        if not all_items:
+            console.print("[yellow]No items found across runs.[/yellow]")
+            return
+
+        unique_items, duplicates = deduplicate(all_items)
+        hist_by_source: dict[str, int] = {}
+        for it in unique_items:
+            hist_by_source[it.source] = hist_by_source.get(it.source, 0) + 1
+
+        hist_table = Table(
+            title=f"Consolidated Historical Corpus ({len(runs)} runs)",
+            show_lines=True,
+        )
+        hist_table.add_column("Source", style="bold")
+        hist_table.add_column("Unique Items", justify="right")
+        hist_table.add_column("Corpus Share", justify="right")
+
+        total_hist = len(unique_items)
+        for src, count in sorted(hist_by_source.items()):
+            share = (count / total_hist * 100) if total_hist > 0 else 0
+            hist_table.add_row(src, str(count), f"{share:.1f}%")
+
+        hist_table.add_section()
+        hist_table.add_row(
+            "[bold]Total Consolidated[/bold]",
+            f"[bold green]{total_hist}[/bold green]",
+            "100.0%",
+        )
+        console.print(hist_table)
+        console.print(
+            f"\n[dim]Total across history: {len(all_items)} raw items collected | "
+            f"{len(duplicates)} duplicates removed[/dim]"
+        )
+        return
 
     if not run_id:
         run_id = _get_latest_run_id()
@@ -692,7 +747,6 @@ def stats(
         console.print(f"[dim]Auto-selected latest run:[/dim] [cyan]{run_id}[/cyan]")
 
     from msrkit.provenance import load_manifest
-    from msrkit.storage import ItemStorage
 
     try:
         manifest = load_manifest(DATA_DIR, run_id)
@@ -737,11 +791,9 @@ def stats(
     console.print(f"\n[bold]Total items:[/bold] {total_items}")
     console.print(f"[bold]Total requests:[/bold] {total_requests}")
 
-    # Check for items file
-    item_storage = ItemStorage(DATA_DIR)
+    # Check for items file of this run
     items_list = item_storage.read_items(run_id, prefer_deduped=True)
     if items_list:
-        # Count by source
         by_source: dict[str, int] = {}
         for item in items_list:
             by_source[item.source] = by_source.get(item.source, 0) + 1
@@ -752,6 +804,46 @@ def stats(
 
         items_hash = item_storage.items_hash(run_id)
         console.print(f"\n[bold]Items file SHA-256:[/bold] {items_hash}")
+
+    # Historical Consolidated Overview across all runs
+    runs = item_storage.list_runs()
+    if len(runs) > 1:
+        from msrkit.dedupe import deduplicate
+
+        all_items = []
+        for r in runs:
+            all_items.extend(item_storage.read_items(r, prefer_deduped=True))
+
+        if all_items:
+            unique_items, duplicates = deduplicate(all_items)
+            hist_by_source = {}
+            for it in unique_items:
+                hist_by_source[it.source] = hist_by_source.get(it.source, 0) + 1
+
+            hist_table = Table(
+                title=f"\nConsolidated Historical Corpus ({len(runs)} runs)",
+                show_lines=True,
+            )
+            hist_table.add_column("Source", style="bold")
+            hist_table.add_column("Unique Items", justify="right")
+            hist_table.add_column("Corpus Share", justify="right")
+
+            total_hist = len(unique_items)
+            for src, count in sorted(hist_by_source.items()):
+                share = (count / total_hist * 100) if total_hist > 0 else 0
+                hist_table.add_row(src, str(count), f"{share:.1f}%")
+
+            hist_table.add_section()
+            hist_table.add_row(
+                "[bold]Total Consolidated[/bold]",
+                f"[bold green]{total_hist}[/bold green]",
+                "100.0%",
+            )
+            console.print(hist_table)
+            console.print(
+                f"[dim]Historical total: {len(all_items)} raw items collected across runs | "
+                f"{len(duplicates)} duplicates removed[/dim]"
+            )
 
 
 @app.command()
@@ -835,75 +927,83 @@ def export(
     out_path = output or str(DATA_DIR / "export" / target_name / f"items.{fmt}")
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
 
-    if fmt == "jsonl":
-        with open(out_path, "w", encoding="utf-8") as f:
-            for item in items:
-                data = item.model_dump(mode="json")
-                if not include_body:
-                    data.pop("body", None)
-                f.write(json.dumps(data, ensure_ascii=False) + "\n")
-    elif fmt == "csv":
-        import csv
+    try:
+        if fmt == "jsonl":
+            with open(out_path, "w", encoding="utf-8") as f:
+                for item in items:
+                    data = item.model_dump(mode="json")
+                    if not include_body:
+                        data.pop("body", None)
+                    f.write(json.dumps(data, ensure_ascii=False) + "\n")
+        elif fmt == "csv":
+            import csv
 
-        fields = [
-            "id",
-            "source",
-            "kind",
-            "url",
-            "title",
-            "author_handle",
-            "created_at",
-            "updated_at",
-            "matched_terms",
-            "stars",
-            "votes",
-            "tags",
-        ]
-        if include_body:
-            fields.append("body")
+            fields = [
+                "id",
+                "source",
+                "kind",
+                "url",
+                "title",
+                "author_handle",
+                "created_at",
+                "updated_at",
+                "matched_terms",
+                "stars",
+                "votes",
+                "tags",
+            ]
+            if include_body:
+                fields.append("body")
 
-        with open(out_path, "w", encoding="utf-8-sig", newline="") as f:
-            writer = csv.DictWriter(
-                f, fieldnames=fields, delimiter=delimiter, extrasaction="ignore"
-            )
-            writer.writeheader()
-            for item in items:
-                row = item.model_dump(mode="json")
-                row["url"] = str(item.url)
-                row["kind"] = item.kind.value
-                row["matched_terms"] = (
-                    ", ".join(sorted(set(hit.term for hit in item.matched_terms)))
-                    if item.matched_terms
-                    else ""
+            with open(out_path, "w", encoding="utf-8-sig", newline="") as f:
+                writer = csv.DictWriter(
+                    f, fieldnames=fields, delimiter=delimiter, extrasaction="ignore"
                 )
-                row["stars"] = (
-                    item.engagement.stars
-                    if (item.engagement and item.engagement.stars is not None)
-                    else ""
-                )
-                row["votes"] = (
-                    item.engagement.votes
-                    if (item.engagement and item.engagement.votes is not None)
-                    else ""
-                )
-                row["tags"] = (
-                    ", ".join(item.tech.tags)
-                    if (item.tech and item.tech.tags)
-                    else ""
-                )
-                writer.writerow({k: row.get(k) for k in fields})
-    elif fmt == "duckdb":
-        from msrkit.storage import DuckDBStorage
+                writer.writeheader()
+                for item in items:
+                    row = item.model_dump(mode="json")
+                    row["url"] = str(item.url)
+                    row["kind"] = item.kind.value
+                    row["matched_terms"] = (
+                        ", ".join(sorted(set(hit.term for hit in item.matched_terms)))
+                        if item.matched_terms
+                        else ""
+                    )
+                    row["stars"] = (
+                        item.engagement.stars
+                        if (item.engagement and item.engagement.stars is not None)
+                        else ""
+                    )
+                    row["votes"] = (
+                        item.engagement.votes
+                        if (item.engagement and item.engagement.votes is not None)
+                        else ""
+                    )
+                    row["tags"] = (
+                        ", ".join(item.tech.tags)
+                        if (item.tech and item.tech.tags)
+                        else ""
+                    )
+                    writer.writerow({k: row.get(k) for k in fields})
+        elif fmt == "duckdb":
+            from msrkit.storage import DuckDBStorage
 
-        db_path = Path(out_path).with_suffix(".duckdb")
-        db = DuckDBStorage(db_path)
-        inserted = db.ingest_items(items, include_body=include_body)
-        db.close()
-        console.print(f"[green]✓ Inserted {inserted} items into {db_path}[/green]")
-        return
-    else:
-        console.print(f"[red]Unknown format: {fmt}[/red]")
-        raise typer.Exit(1)
+            db_path = Path(out_path).with_suffix(".duckdb")
+            db = DuckDBStorage(db_path)
+            inserted = db.ingest_items(items, include_body=include_body)
+            db.close()
+            console.print(f"[green]✓ Inserted {inserted} items into {db_path}[/green]")
+            return
+        else:
+            console.print(f"[red]Unknown format: {fmt}[/red]")
+            raise typer.Exit(1)
+    except PermissionError:
+        console.print(
+            f"[red]✗ Permissão negada ao salvar '{out_path}'.\n"
+            "O arquivo pode estar aberto em outro aplicativo (como Excel). "
+            "Feche o arquivo e tente novamente.[/red]"
+        )
+        raise typer.Exit(1) from None
 
     console.print(f"[green]✓ Exported {len(items)} items to {out_path}[/green]")
 
@@ -1221,7 +1321,12 @@ def menu() -> None:  # pragma: no cover
                 verbose=False,
             )
         elif choice == "7":
-            stats(run_id=None, verbose=False)
+            which = Prompt.ask(
+                "Estatísticas de [1] Última coleta + Panorama histórico "
+                "ou [2] Apenas corpus consolidado?",
+                default="1",
+            )
+            stats(run_id=None, all_runs=(which == "2"), verbose=False)
         elif choice == "8":
             validate(protocol=DEFAULT_PROTOCOL, verbose=False)
         else:

@@ -533,3 +533,82 @@ limits:
         assert "Deduplicating across 2 historical runs" in result.stdout
         assert (tmp_path / "items" / "consolidated" / "items_deduped.jsonl").exists()
 
+    def test_stats_with_historical_runs(
+        self, tmp_path: Path, sample_items: list[Item], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """msrkit stats displays run stats and consolidated historical corpus."""
+        monkeypatch.setattr("msrkit.cli.DATA_DIR", tmp_path)
+        storage = ItemStorage(tmp_path)
+        storage.save_items(sample_items[:2], "run-1")
+        storage.save_items(sample_items[1:], "run-2")
+
+        # Save manifest for run-2
+        m = Manifest(
+            run_id="run-2",
+            msrkit_version="0.1.0",
+            protocol_path="protocols/v0_rag_agents_testing.yaml",
+            protocol_sha256="abc",
+            started_at=datetime.now(UTC),
+            sources=[
+                SourceManifestEntry(
+                    name="github",
+                    adapter_version="0.1.0",
+                    availability=Availability(status=AvailabilityStatus.OK, reason="OK"),
+                )
+            ],
+        )
+        save_manifest(m, tmp_path)
+
+        result = runner.invoke(app, ["stats", "--run", "run-2"])
+        assert result.exit_code == 0
+        assert "Run Statistics: run-2" in result.stdout
+        assert "Consolidated Historical Corpus (2 runs)" in result.stdout
+        assert "Total Consolidated" in result.stdout
+
+    def test_stats_all_flag(
+        self, tmp_path: Path, sample_items: list[Item], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """msrkit stats --all displays consolidated corpus overview directly."""
+        monkeypatch.setattr("msrkit.cli.DATA_DIR", tmp_path)
+        storage = ItemStorage(tmp_path)
+        storage.save_items(sample_items[:2], "run-1")
+        storage.save_items(sample_items[1:], "run-2")
+
+        result = runner.invoke(app, ["stats", "--all"])
+        assert result.exit_code == 0
+        assert "Consolidated Historical Corpus (2 runs)" in result.stdout
+        assert "Total Consolidated" in result.stdout
+        assert "duplicates removed" in result.stdout
+
+    def test_stats_no_runs_exits_cleanly(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """msrkit stats exits with error when no runs exist."""
+        monkeypatch.setattr("msrkit.cli.DATA_DIR", tmp_path)
+        result = runner.invoke(app, ["stats"])
+        assert result.exit_code == 1
+        assert "No runs found" in result.stdout
+
+    def test_export_permission_error_handled(
+        self, tmp_path: Path, sample_items: list[Item], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """msrkit export catches PermissionError and displays helpful message."""
+        monkeypatch.setattr("msrkit.cli.DATA_DIR", tmp_path)
+        storage = ItemStorage(tmp_path)
+        storage.save_items(sample_items[:1], "run-1")
+
+        import builtins
+
+        real_open = builtins.open
+
+        def mock_open(path: object, *args: object, **kwargs: object) -> object:
+            if str(path).endswith("test.csv"):
+                raise PermissionError("Access denied")
+            return real_open(path, *args, **kwargs)  # type: ignore[call-overload]
+
+        monkeypatch.setattr("builtins.open", mock_open)
+        result = runner.invoke(app, ["export", "--run", "run-1", "-f", "csv", "-o", "test.csv"])
+        assert result.exit_code == 1
+        assert "Permissão negada" in result.stdout
+
+

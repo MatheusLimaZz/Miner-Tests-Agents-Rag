@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -506,6 +507,64 @@ class TestSearchLoopsAndQueryBuilding:
         raw_items = list(adapter.search(q))
         assert len(raw_items) == 1
         assert raw_items[0].native_id == "555"
+
+    def test_stackexchange_multi_tag_decoupled_params(self) -> None:
+        """Multiple tags are not joined with ';' when terms are present to prevent 0-match AND."""
+        adapter = StackExchangeAdapter()
+        q = Query(
+            source="stackexchange",
+            terms=["rag"],
+            extra={"sites": ["stackoverflow"], "tagged": ["rag", "langchain"]},
+        )
+        params = adapter._build_params(q, site="stackoverflow", page=1, pagesize=10, term="rag")
+        assert params.get("q") == "rag"
+        assert "tagged" not in params
+
+    def test_stackexchange_tags_search_without_terms(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When terms is empty, tags are queried individually."""
+        adapter = StackExchangeAdapter()
+        captured_params: list[dict[str, Any]] = []
+
+        def mock_get(url: str, params: dict[str, Any]) -> MagicMock:
+            captured_params.append(params)
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.json.return_value = {
+                "has_more": False,
+                "items": [{"question_id": len(captured_params), "title": "SE Q"}],
+            }
+            return resp
+
+        monkeypatch.setattr(adapter, "_governed_get", mock_get)
+
+        q = Query(
+            source="stackexchange",
+            terms=[],
+            extra={"sites": ["stackoverflow"], "tagged": ["rag", "langchain"]},
+            limit=10,
+        )
+        raw_items = list(adapter.search(q))
+        assert len(raw_items) == 2
+        assert len(captured_params) == 2
+        assert captured_params[0].get("tagged") == "rag"
+        assert captured_params[1].get("tagged") == "langchain"
+
+    def test_stackexchange_explicit_tagged_mode_and(self) -> None:
+        """When tagged_mode is 'and', multi-tags are joined with ';'."""
+        adapter = StackExchangeAdapter()
+        q = Query(
+            source="stackexchange",
+            terms=["rag"],
+            extra={
+                "sites": ["stackoverflow"],
+                "tagged": ["rag", "langchain"],
+                "tagged_mode": "and",
+            },
+        )
+        params = adapter._build_params(q, site="stackoverflow", page=1, pagesize=10, term="rag")
+        assert params.get("tagged") == "rag;langchain"
 
     def test_hackernews_search_loop(self, monkeypatch: pytest.MonkeyPatch) -> None:
         adapter = HackerNewsAdapter()
