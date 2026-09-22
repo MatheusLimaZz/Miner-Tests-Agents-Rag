@@ -104,38 +104,43 @@ class HuggingFaceAdapter(BaseAdapter):
         kinds = q.extra.get("kinds", ["models", "datasets", "spaces"])
         limit = q.limit or 5000
         total_yielded = 0
-        search_text = " ".join(q.terms)
+        seen_ids: set[str] = set()
 
-        for kind in kinds:
-            if total_yielded >= limit:
-                break
-
-            endpoint = f"{_BASE_URL}/{kind}"
-            params: dict[str, Any] = {
-                "search": search_text,
-                "limit": min(self.policy.max_page_size, limit - total_yielded),
-                "full": "true",
-            }
-
-            resp = self._governed_get(endpoint, params=params)
-            if resp.status_code != 200:
-                logger.warning("HF search returned %d for %s", resp.status_code, kind)
-                continue
-
-            items = resp.json()
-            if not isinstance(items, list):
-                continue
-
-            for item in items:
+        search_terms = q.terms if q.terms else [""]
+        for term in search_terms:
+            for kind in kinds:
                 if total_yielded >= limit:
                     return
-                item_id = item.get("id", item.get("modelId", ""))
-                yield self._make_raw_item(
-                    source=self.name,
-                    native_id=str(item_id),
-                    payload={**item, "_hf_kind": kind},
-                )
-                total_yielded += 1
+
+                endpoint = f"{_BASE_URL}/{kind}"
+                params: dict[str, Any] = {
+                    "search": term,
+                    "limit": min(self.policy.max_page_size, limit - total_yielded),
+                    "full": "true",
+                }
+
+                resp = self._governed_get(endpoint, params=params)
+                if resp.status_code != 200:
+                    logger.warning("HF search returned %d for %s", resp.status_code, kind)
+                    continue
+
+                items = resp.json()
+                if not isinstance(items, list):
+                    continue
+
+                for item in items:
+                    if total_yielded >= limit:
+                        return
+                    item_id = item.get("id", item.get("modelId", ""))
+                    if not item_id or item_id in seen_ids:
+                        continue
+                    seen_ids.add(item_id)
+                    yield self._make_raw_item(
+                        source=self.name,
+                        native_id=str(item_id),
+                        payload={**item, "_hf_kind": kind},
+                    )
+                    total_yielded += 1
 
     def normalize(self, raw: RawItem, terms: list[str] | None = None) -> Item:
         """Convert HF model/dataset/space to canonical Item."""
