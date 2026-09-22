@@ -15,4 +15,4 @@ services:
     env_file:
       - path: .env
         required: false
-    command: menu
+    command: /bin/bash

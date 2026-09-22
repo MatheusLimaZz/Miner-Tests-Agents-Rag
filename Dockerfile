@@ -43,8 +43,5 @@ RUN pip install --no-cache-dir .
 # Create the data directory mountpoint
 RUN mkdir -p /app/data
 
-# Default entrypoint is the msrkit CLI
-ENTRYPOINT ["msrkit"]
-
-# Default command opens the interactive menu
-CMD ["menu"]
+# Default command opens an interactive bash shell
+CMD ["/bin/bash"]

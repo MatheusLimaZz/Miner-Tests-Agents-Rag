@@ -75,8 +75,12 @@ Para usar o container fixo que você criou sem recriar novos containers toda vez
 ```bash
 docker start -ai msrkit
 ```
-- **Início instantâneo (< 1 segundo):** "Acorda" o container existente e abre o menu visual na tela.
-- **Ao digitar `0` (Sair):** O container simplesmente dorme (desliga). Nenhum container novo é criado.
+- **Início instantâneo (< 1 segundo):** "Acorda" o container existente e entra diretamente no terminal Linux bash (`root@...:/app# `).
+- Lá de dentro você pode rodar comandos diretamente (`msrkit`, `msrkit sources`, `msrkit run ...`) ou abrir o menu visual digitando:
+  ```bash
+  msrkit menu
+  ```
+- **Para sair e desligar o container:** basta digitar `exit`. O container simplesmente dorme (desliga). Nenhum container novo é criado.
 
 ---
 
