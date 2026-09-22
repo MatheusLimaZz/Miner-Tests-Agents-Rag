@@ -117,38 +117,21 @@ Você pode executar o MSR-Kit de duas maneiras: utilizando Docker (totalmente is
 O container oficial utiliza **Ubuntu 24.04 LTS (Noble Numbat)** e Python 3.12.
 
 #### 1. Preparação (Apenas na 1ª vez):
-No terminal da pasta do projeto, execute:
+No terminal da pasta do projeto, construa a imagem local:
 ```bash
-# 1. Construir a imagem local:
 docker compose build
-
-# 2. Criar o container persistente com mapeamento de volumes:
-docker compose create msrkit
 ```
 
-#### 2. Execução Interativa (Container Único / Mais Rápido):
+#### 2. Execução Direta no Terminal (PowerShell / CMD / Bash):
+Basta disparar os comandos diretamente do seu terminal no computador. Os dados coletados e planilhas aparecem na pasta `./data`:
 ```bash
-docker start -ai msrkit
-```
-- O terminal conectará instantaneamente no ambiente Linux (`root@...:/app# `).
-- Lá dentro, basta rodar o comando desejado sem prefixos:
-  ```bash
-  msrkit menu
-  # ou
-  msrkit sources
-  # ou
-  msrkit run protocols/v0_rag_agents_testing.yaml -s hackernews -l 10
-  ```
-- Para sair e desligar o container, digite `exit`.
-
-#### 3. Comandos Diretos no Terminal do Host (Windows / PowerShell):
-Se não quiser entrar no container e preferir disparar comandos pontuais diretamente do PowerShell ou CMD:
-```bash
-# Abrir o menu interativo:
+# Abrir o assistente interativo visual:
 docker compose run --rm msrkit msrkit menu
 
-# Rodar coleta com limite:
+# Ou executar comandos pontuais:
+docker compose run --rm msrkit msrkit sources
 docker compose run --rm msrkit msrkit run protocols/v0_rag_agents_testing.yaml -s devto -l 10
+docker compose run --rm msrkit msrkit export -f csv -o data/resultados.csv
 ```
 
 ---

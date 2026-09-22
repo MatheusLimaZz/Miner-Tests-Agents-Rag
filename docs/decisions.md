@@ -106,8 +106,11 @@ This document records architectural, design, and technical decisions made during
 
 - **Context:** Cross-platform literature mining often produces duplicates (e.g. shared articles, mirror posts, cross-posted questions).
 - **Decision:** Two-pass deterministic deduplication:
-  1. URL canonicalization: lowercase scheme and host, stripping tracking query parameters (`utm_*`, `ref`, `source`), stripping trailing slashes.
-  2. Content hashing: SHA-256 over normalized `title + " " + body` (collapsed whitespace, lowercase).
+  1. **URL canonicalization:** lowercase scheme and host, stripping tracking query parameters (`utm_*`, `ref`, `source`, `fbclid`, etc.), stripping trailing slashes on non-root paths, and sorting remaining query parameters.
+  2. **Content hashing (with strict entity protection):** SHA-256 over normalized `title + " " + body` (collapsed whitespace).
+     - **Safety rule 1 (Mandatory non-empty body):** Content hashing is only executed when `body` is present and non-empty (`has_body = bool(item.body and item.body.strip())`).
+     - **Safety rule 2 (Code artifact exclusion):** Code files (`ItemKind.CODE`) are strictly excluded from content hashing pass (`item.kind != ItemKind.CODE`).
+     - **Rationale:** Code search items (which share common filenames like `test_rag.py`, `eval.py`) and title-only link posts rely exclusively on canonical URL deduplication. This completely prevents false-positive mergers between distinct code files across different repositories or distinct articles sharing generic headlines.
   - MinHash/LSH near-duplicate detection is deferred to v1.
 - **Conservative Principle:** Deterministic, reproducible, and verifiable deduplication with zero false-positive entity mergers.
 

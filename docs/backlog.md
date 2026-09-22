@@ -63,8 +63,8 @@ The collected grey literature corpus will serve as the empirical foundation to a
 
 ## Infrastructure & DevOps
 
-- [ ] Containerized execution environment (`Dockerfile` and `docker-compose.yml`).
-- [ ] Continuous Integration (GitHub Actions) for linting, type-checking, and cassette playback.
+- [x] Containerized execution environment (`Dockerfile` and `docker-compose.yml` based on Ubuntu 24.04 LTS).
+- [x] Continuous Integration (GitHub Actions `.github/workflows/ci.yml`) for linting, pytest, coverage, and protocol validation.
 - [ ] Checkpointed collection runs with granular per-partition progress persistence.
 - [ ] Parallel async collection across independent sources.
 - [ ] Connection pooling and HTTP/2 multiplexing for httpx.

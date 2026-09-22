@@ -51,69 +51,30 @@ Esta é a opção mais limpa e moderna. O MSR-Kit roda dentro de um container Li
 
 ### 📦 Preparação Inicial (Apenas na 1ª vez)
 
-Certifique-se de que o **Docker Desktop** está aberto. No terminal da pasta do projeto, execute os 2 passos abaixo:
+Certifique-se de que o **Docker Desktop** está aberto. No terminal da pasta do projeto, construa a imagem:
 
-#### Passo 1: Construir a Imagem
 ```bash
 docker compose build
 ```
 > **O que faz:** O Docker baixa a imagem oficial do **Ubuntu 24.04 LTS**, instala o Python 3.12, as dependências e empacota o MSR-Kit na imagem local `msrkit:ubuntu`.
 
-#### Passo 2: Criar o Container Único
-```bash
-docker compose create msrkit
-```
-> **O que faz:** Cria um container fixo chamado **`msrkit`**, mapeando a pasta `./data` do seu computador para o container. Ele fica pronto para ser ligado a qualquer momento.
-
 ---
 
-### 🚀 Formas de Executar a Aplicação
+### 🚀 Como Executar no Terminal (PowerShell / CMD / Bash)
 
-Você pode escolher a forma mais adequada ao seu fluxo de trabalho:
-
-#### Opção 1: Terminal Interativo no Container (Recomendada) ⭐
-Para usar o container fixo sem precisar recriar imagens a cada comando:
+Você dispara os comandos diretamente do terminal do seu computador, sem precisar entrar no container. As planilhas e dados coletados aparecem imediatamente na pasta `./data`:
 
 ```bash
-docker start -ai msrkit
-```
-- **Início instantâneo (< 1 segundo):** "Acorda" o container existente e entra diretamente no terminal do ambiente Linux (`root@...:/app# `).
-- Lá dentro, você pode rodar qualquer comando normalmente sem o prefixo do Docker:
-  ```bash
-  # Abrir o assistente visual interativo:
-  msrkit menu
-
-  # Ou executar qualquer comando diretamente:
-  msrkit sources
-  msrkit run protocols/v0_rag_agents_testing.yaml --source hackernews --limit 10
-  ```
-- **Para sair e desligar o container:** basta digitar `exit`. O container é pausado de forma limpa e nenhum container novo é criado.
-
----
-
-#### Opção 2: Comandos Diretos no Terminal do Host (Automação / Scripts) 💻
-Se você prefere disparar comandos pontuais direto do PowerShell, CMD ou Bash do seu computador sem entrar no container:
-
-```bash
-# Abrir o menu interativo diretamente:
+# 1. Abrir o assistente interativo visual (Recomendado):
 docker compose run --rm msrkit msrkit menu
 
-# Validar o protocolo sem gastar requisições de rede:
+# 2. Ou executar qualquer comando diretamente:
+docker compose run --rm msrkit msrkit sources
 docker compose run --rm msrkit msrkit validate protocols/v0_rag_agents_testing.yaml
-
-# Fazer simulação / orçamento de requisições (Dry Run):
 docker compose run --rm msrkit msrkit plan protocols/v0_rag_agents_testing.yaml --source hackernews
-
-# Coletar itens de uma fonte:
 docker compose run --rm msrkit msrkit run protocols/v0_rag_agents_testing.yaml --source hackernews --limit 10
-
-# Desduplicar itens coletados:
 docker compose run --rm msrkit msrkit dedupe
-
-# Ver estatísticas da coleta:
 docker compose run --rm msrkit msrkit stats
-
-# Exportar para planilha CSV (salva direto em data/resultados.csv no computador):
 docker compose run --rm msrkit msrkit export -f csv -o data/resultados.csv
 ```
 
@@ -185,12 +146,12 @@ Digite o número da opção [0]:
 ```
 
 ### O que cada opção faz:
-- **`1` - 🎯 Iniciar Mineração:** Coleta guiada onde você escolhe a fonte (Hacker News, Dev.to, RSS, GitHub, etc.) e define dinamicamente a quantidade de itens a minerar.
+- **`1` - 🎯 Iniciar Mineração:** Coleta guiada onde você escolhe a fonte (ou todas) e define a quantidade máxima de itens. Gera imediatamente a planilha de achados brutos com timestamp (`data/resultados_YYYYMMDD_HHMMSS_brutos.csv`, com cópia em `data/resultados.csv`) e oferece em seguida a opção opcional de desduplicar para comparar o antes e depois.
 - **`2` - ⚙️ Gerenciar Fontes:** Ativa ou desativa fontes no arquivo de protocolo YAML de acordo com as credenciais disponíveis.
 - **`3` - Status detalhado das fontes:** Exibe a tabela com o status de cada API (OK, DEGRADED, UNSUPPORTED), variáveis de autenticação e limites de taxa (rate limits).
 - **`4` - Dry-Run (Simulação):** Calcula as partições temporais e estimativa de requisições sem gastar cota de rede.
-- **`5` - Desduplicação:** Detecta e remove duplicatas por URL canônica e SimHash (apenas da última coleta ou de todo o histórico acumulado).
-- **`6` - Exportar em CSV:** Exporta os dados minerados para `data/resultados.csv` (última coleta ou histórico consolidado).
+- **`5` - Desduplicação:** Detecta e remove duplicatas por URL canônica (Passo 1) e Hash de Conteúdo SHA-256 (Passo 2), com proteção para que arquivos de código e posts sem corpo nunca colidam indevidamente. Suporta desduplicar a última coleta ou todo o histórico consolidado.
+- **`6` - Exportar em CSV:** Exporta os dados minerados para planilha CSV, permitindo escolher entre a **versão desduplicada** ou a **versão bruta** (com salvamento histórico em `data/resultados_YYYYMMDD_HHMMSS_...csv`).
 - **`7` - Estatísticas:** Apresenta resumo de requisições, descartes e itens coletados no último run ou corpus consolidado.
 - **`8` - Validar protocolo:** Checa a integridade e sintaxe do arquivo de protocolo de pesquisa sem chamadas de rede.
 - **`0` - Sair:** Encerra a aplicação.
@@ -209,9 +170,9 @@ Para automação de coletas, scripts e usuários avançados, todos os comandos p
 | **`msrkit validate`** | Valida a sintaxe do protocolo e credenciais (sem rede) | `msrkit validate protocols/v0_rag_agents_testing.yaml` |
 | **`msrkit plan`** | Simulação (Dry Run): calcula partições e estimativa de requisições | `msrkit plan protocols/v0_rag_agents_testing.yaml -s hackernews` |
 | **`msrkit run`** | Executa a mineração real dos dados | `msrkit run protocols/v0_rag_agents_testing.yaml -s hackernews -l 50` |
-| **`msrkit dedupe`** | Remove duplicatas por URL canônica e SimHash | `msrkit dedupe` (usa o último run por padrão) |
-| **`msrkit stats`** | Exibe resumo de requisições, descartes e itens coletados | `msrkit stats` |
-| **`msrkit export`** | Exporta os dados para CSV, JSONL ou DuckDB | `msrkit export -f csv -o data/meus_dados.csv` |
+| **`msrkit dedupe`** | Remove duplicatas por URL canônica e Hash SHA-256 | `msrkit dedupe` (ou `msrkit dedupe --all` para todo o histórico) |
+| **`msrkit stats`** | Exibe resumo de requisições, descartes e itens coletados | `msrkit stats` (ou `msrkit stats --all`) |
+| **`msrkit export`** | Exporta os dados para CSV, JSONL ou DuckDB | `msrkit export -f csv -o data/meus_dados.csv` (adicione `--raw` para brutos) |
 | **`msrkit normalize`** | Reprocessa e reclassifica dados brutos sem refazer chamadas de rede | `msrkit normalize` |
 
 ### Parâmetros e Flags Mais Utilizados:
@@ -219,6 +180,9 @@ Para automação de coletas, scripts e usuários avançados, todos os comandos p
 - `-l, --limit <número>`: Limita a quantidade máxima de itens a serem coletados (ótimo para testes rápidos).
 - `-f, --format <formato>`: Formato de exportação (`csv`, `jsonl` ou `duckdb`).
 - `-o, --output <arquivo>`: Caminho de saída do arquivo exportado.
+- `-d, --delimiter <sep>`: Delimitador do CSV (padrão `;` para compatibilidade com Excel em português, ou `,`).
+- `--raw`: Exporta os achados brutos completos (sem aplicar desduplicação).
+- `-a, --all`: Processa ou exporta o conjunto consolidado de todas as coletas históricas.
 - `--resume <run_id>`: Retoma uma coleta que foi interrompida sem recomeçar do zero.
 
 ---
