@@ -132,9 +132,10 @@ class HuggingFaceAdapter(BaseAdapter):
                     if total_yielded >= limit:
                         return
                     item_id = item.get("id", item.get("modelId", ""))
-                    if not item_id or item_id in seen_ids:
+                    seen_key = f"{kind}:{item_id}"
+                    if not item_id or seen_key in seen_ids:
                         continue
-                    seen_ids.add(item_id)
+                    seen_ids.add(seen_key)
                     yield self._make_raw_item(
                         source=self.name,
                         native_id=str(item_id),
@@ -168,8 +169,10 @@ class HuggingFaceAdapter(BaseAdapter):
             tags=tags,
         )
 
+        native_key = f"{hf_kind}:{item_id}" if hf_kind != "models" else str(item_id)
+
         return Item(
-            id=Item.make_id(self.name, str(item_id)),
+            id=Item.make_id(self.name, native_key),
             source=self.name,
             kind=kind,
             url=url,  # type: ignore[arg-type]

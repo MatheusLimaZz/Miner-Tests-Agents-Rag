@@ -175,9 +175,10 @@ class StackExchangeAdapter(BaseAdapter):
                             if total_yielded >= limit:
                                 return
                             qid = str(item.get("question_id", ""))
-                            if not qid or qid in seen_ids:
+                            seen_key = f"{site}:{qid}"
+                            if not qid or seen_key in seen_ids:
                                 continue
-                            seen_ids.add(qid)
+                            seen_ids.add(seen_key)
                             yield self._make_raw_item(
                                 source=self.name,
                                 native_id=qid,
@@ -207,8 +208,11 @@ class StackExchangeAdapter(BaseAdapter):
 
         matched = match_terms(terms or [], title=p.get("title"), body=p.get("body"), tags=tags)
 
+        qid = str(p.get("question_id") or raw.native_id or "")
+        native_key = f"{site}:{qid}" if site != "stackoverflow" else qid
+
         return Item(
-            id=Item.make_id(self.name, str(p.get("question_id", ""))),
+            id=Item.make_id(self.name, native_key),
             source=self.name,
             kind=ItemKind.THREAD,
             url=url,  # type: ignore[arg-type]

@@ -146,6 +146,7 @@ class RedditAdapter(BaseAdapter):
         )
         limit = q.limit or 5000
         total_yielded = 0
+        seen_ids: set[str] = set()
 
         query_text = " OR ".join(q.terms)
 
@@ -183,9 +184,23 @@ class RedditAdapter(BaseAdapter):
                     if total_yielded >= limit:
                         return
                     post = child.get("data") or {}
+                    post_id = str(post.get("id", ""))
+                    if not post_id or post_id in seen_ids:
+                        continue
+
+                    # Filter by date if since/until bounds exist
+                    created_utc = post.get("created_utc")
+                    if created_utc and (q.since or q.until):
+                        post_date = datetime.fromtimestamp(created_utc, tz=UTC).date()
+                        if q.until and post_date > q.until:
+                            continue
+                        if q.since and post_date < q.since:
+                            continue
+
+                    seen_ids.add(post_id)
                     yield self._make_raw_item(
                         source=self.name,
-                        native_id=post.get("id", ""),
+                        native_id=post_id,
                         payload=post,
                     )
                     total_yielded += 1

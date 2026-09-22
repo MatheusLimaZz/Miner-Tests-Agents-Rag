@@ -57,9 +57,11 @@ def canonicalize_url(url: str) -> str:
     clean_params = {k: v for k, v in params.items() if k.lower() not in _TRACKING_PARAMS}
     sorted_query = urlencode(sorted(clean_params.items()), doseq=True) if clean_params else ""
 
-    # Clean path — remove trailing slash except for root
+    # Clean path — root path is normalized to '/', trailing slashes removed on non-root
     path = parsed.path
-    if path != "/" and path.endswith("/"):
+    if not path:
+        path = "/"
+    elif path != "/" and path.endswith("/"):
         path = path.rstrip("/")
 
     return urlunparse((scheme, f"{host}{port}", path, "", sorted_query, ""))

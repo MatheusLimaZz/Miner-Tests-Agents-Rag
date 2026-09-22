@@ -38,6 +38,11 @@ class TestCanonicalizeUrl:
         result = canonicalize_url(url)
         assert result.endswith("/")
 
+    def test_root_slash_equivalence(self) -> None:
+        """Root URLs with and without trailing slash produce identical canonical URLs."""
+        assert canonicalize_url("https://example.com") == canonicalize_url("https://example.com/")
+        assert canonicalize_url("https://example.com") == "https://example.com/"
+
     def test_preserve_meaningful_params(self) -> None:
         url = "https://example.com/search?q=test&page=2"
         result = canonicalize_url(url)

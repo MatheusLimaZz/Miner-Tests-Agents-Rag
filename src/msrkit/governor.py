@@ -240,7 +240,7 @@ class Governor:
         """Check if daily cap has been reached."""
         import datetime
 
-        today = datetime.date.today().isoformat()
+        today = datetime.datetime.now(datetime.UTC).date().isoformat()
 
         # Reset counter if it's a new day
         if self._daily_date != today:

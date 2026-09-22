@@ -87,6 +87,7 @@ class RSSAdapter(BaseAdapter):
         feeds = q.extra.get("feeds", [])
         limit = q.limit or 5000
         total_yielded = 0
+        seen_ids: set[str] = set()
 
         for feed_url in feeds:
             if total_yielded >= limit:
@@ -105,12 +106,19 @@ class RSSAdapter(BaseAdapter):
                 if total_yielded >= limit:
                     return
 
-                entry_id = entry.get("id", entry.get("link", ""))
+                entry_id = str(entry.get("id") or entry.get("link") or "")
+                if not entry_id or entry_id in seen_ids:
+                    continue
+                seen_ids.add(entry_id)
+
+                published_val = (
+                    entry.get("published") or entry.get("updated") or entry.get("pubDate") or ""
+                )
                 payload = {
                     "title": entry.get("title", ""),
                     "link": entry.get("link", ""),
                     "summary": entry.get("summary", ""),
-                    "published": entry.get("published", ""),
+                    "published": published_val,
                     "author": entry.get("author", ""),
                     "tags": [
                         t.get("term", "") if isinstance(t, dict) else str(t)
@@ -121,7 +129,7 @@ class RSSAdapter(BaseAdapter):
 
                 yield self._make_raw_item(
                     source=self.name,
-                    native_id=str(entry_id),
+                    native_id=entry_id,
                     payload=payload,
                 )
                 total_yielded += 1

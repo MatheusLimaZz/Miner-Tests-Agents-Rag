@@ -751,3 +751,79 @@ class TestSearchLoopsAndQueryBuilding:
         )
         item = adapter.normalize(raw_dataset)
         assert str(item.url) == "https://huggingface.co/datasets/user/rag-data"
+
+    def test_devto_cross_tag_deduplication(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """dev.to search does not yield duplicate items when an article matches multiple tags."""
+        adapter = DevToAdapter()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = [
+            {"id": 42, "title": "Article on RAG and LLM", "tag_list": ["rag", "llm"]}
+        ]
+        monkeypatch.setattr(adapter, "_governed_get", lambda *args, **kwargs: mock_resp)
+
+        q = Query(
+            source="devto",
+            terms=["rag"],
+            extra={"tags": ["rag", "llm"]},
+            limit=10,
+        )
+        items = list(adapter.search(q))
+        assert len(items) == 1
+        assert items[0].native_id == "42"
+
+    def test_rss_atom_updated_date_fallback(self) -> None:
+        """RSS adapter extracts date from <updated> tag when <published> is absent (Atom format)."""
+        adapter = RSSAdapter()
+        raw = RawItem(
+            source="rss",
+            native_id="https://example.com/atom/1",
+            payload={
+                "title": "Atom Post",
+                "link": "https://example.com/atom/1",
+                "published": "Mon, 15 Jan 2024 10:00:00 GMT",
+            },
+            fetched_at=datetime.now(UTC),
+        )
+        item = adapter.normalize(raw)
+        assert item.created_at is not None
+        assert item.created_at.year == 2024
+        assert item.created_at.month == 1
+
+    def test_huggingface_model_and_dataset_same_id_distinct(self) -> None:
+        """Models and datasets with identical IDs produce distinct canonical Item IDs."""
+        adapter = HuggingFaceAdapter()
+        raw_model = RawItem(
+            source="huggingface",
+            native_id="user/bench",
+            payload={"id": "user/bench", "_hf_kind": "models"},
+            fetched_at=datetime.now(UTC),
+        )
+        raw_dataset = RawItem(
+            source="huggingface",
+            native_id="user/bench",
+            payload={"id": "user/bench", "_hf_kind": "datasets"},
+            fetched_at=datetime.now(UTC),
+        )
+        item_model = adapter.normalize(raw_model)
+        item_dataset = adapter.normalize(raw_dataset)
+        assert item_model.id != item_dataset.id
+
+    def test_stackexchange_multi_site_same_id_distinct(self) -> None:
+        """Same numeric question ID across different SE sites produces distinct Item IDs."""
+        adapter = StackExchangeAdapter()
+        raw_so = RawItem(
+            source="stackexchange",
+            native_id="999",
+            payload={"question_id": 999, "_site": "stackoverflow"},
+            fetched_at=datetime.now(UTC),
+        )
+        raw_ds = RawItem(
+            source="stackexchange",
+            native_id="999",
+            payload={"question_id": 999, "_site": "datascience"},
+            fetched_at=datetime.now(UTC),
+        )
+        item_so = adapter.normalize(raw_so)
+        item_ds = adapter.normalize(raw_ds)
+        assert item_so.id != item_ds.id

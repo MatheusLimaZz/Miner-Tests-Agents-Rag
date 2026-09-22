@@ -89,6 +89,7 @@ class DevToAdapter(BaseAdapter):
         tags = q.extra.get("tags", ["rag", "llm", "ai", "agents", "testing"])
         limit = q.limit or 5000
         total_yielded = 0
+        seen_ids: set[str] = set()
 
         for tag in tags:
             if total_yielded >= limit:
@@ -123,6 +124,10 @@ class DevToAdapter(BaseAdapter):
                     if total_yielded >= limit:
                         return
 
+                    art_id = str(article.get("id", ""))
+                    if not art_id or art_id in seen_ids:
+                        continue
+
                     pub_str = article.get("published_at") or article.get("created_at")
                     if pub_str and (q.since or q.until):
                         try:
@@ -141,9 +146,11 @@ class DevToAdapter(BaseAdapter):
                         art_desc = article.get("description") or ""
                         if not match_terms(q.terms, title=art_title, body=art_desc):
                             continue
+
+                    seen_ids.add(art_id)
                     yield self._make_raw_item(
                         source=self.name,
-                        native_id=str(article.get("id", "")),
+                        native_id=art_id,
                         payload=article,
                     )
                     total_yielded += 1
