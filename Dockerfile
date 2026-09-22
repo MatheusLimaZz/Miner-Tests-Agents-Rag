@@ -37,8 +37,8 @@ COPY pyproject.toml README.md ./
 COPY src/ ./src/
 COPY protocols/ ./protocols/
 
-# Install msrkit inside the container
-RUN pip install --no-cache-dir .
+# Install msrkit inside the container in editable mode (-e) for live volume reloading
+RUN pip install --no-cache-dir -e .
 
 # Create the data directory mountpoint
 RUN mkdir -p /app/data
