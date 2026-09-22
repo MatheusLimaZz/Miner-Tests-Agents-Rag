@@ -154,7 +154,7 @@ Digite o número da opção [0]:
 ```
 
 ### O que cada opção faz:
-- **`1` - 🎯 Iniciar Mineração:** Coleta guiada onde você escolhe a fonte (ou todas) e define a quantidade máxima de itens. Gera imediatamente a planilha de achados brutos com timestamp (`data/resultados_YYYYMMDD_HHMMSS_brutos.csv`, com cópia em `data/resultados.csv`) e oferece em seguida a opção opcional de desduplicar para comparar o antes e depois.
+- **`1` - 🎯 Iniciar Mineração:** Coleta guiada onde você escolhe a fonte (ou todas) e define a quantidade máxima de itens. Gera imediatamente a planilha de achados brutos com timestamp (`data/resultados_YYYYMMDD_HHMMSS_brutos.csv`) e oferece em seguida a opção opcional de desduplicar para comparar o antes e depois.
 - **`2` - ⚙️ Gerenciar Fontes:** Ativa ou desativa fontes no arquivo de protocolo YAML de acordo com as credenciais disponíveis.
 - **`3` - Status detalhado das fontes:** Exibe a tabela com o status de cada API (OK, DEGRADED, UNSUPPORTED), variáveis de autenticação e limites de taxa (rate limits).
 - **`4` - Dry-Run (Simulação):** Calcula as partições temporais e estimativa de requisições sem gastar cota de rede.

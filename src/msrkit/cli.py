@@ -13,10 +13,8 @@ Commands:
 
 from __future__ import annotations
 
-import contextlib
 import json
 import logging
-import shutil
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -1331,7 +1329,6 @@ def _interactive_mining_menu(protocol_path: str) -> None:  # pragma: no cover
     latest_run = _get_latest_run_id()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     raw_csv = f"data/resultados_{timestamp}_brutos.csv"
-    latest_csv = "data/resultados.csv"
 
     console.print("\n[bold cyan]─── 3. Gerando Planilha Preliminar dos Achados ───[/bold cyan]")
     export(
@@ -1342,15 +1339,10 @@ def _interactive_mining_menu(protocol_path: str) -> None:  # pragma: no cover
         raw=True,
         verbose=False,
     )
-    with contextlib.suppress(Exception):
-        shutil.copyfile(raw_csv, latest_csv)
 
     console.print(
         f"[bold green]✓ Planilha de achados brutos gerada:[/bold green] "
         f"[bold cyan]{raw_csv}[/bold cyan]"
-    )
-    console.print(
-        f"[dim](Uma cópia de referência rápida também foi salva em: {latest_csv})[/dim]"
     )
 
     console.print()
@@ -1372,14 +1364,9 @@ def _interactive_mining_menu(protocol_path: str) -> None:  # pragma: no cover
             raw=False,
             verbose=False,
         )
-        with contextlib.suppress(Exception):
-            shutil.copyfile(dedup_csv, latest_csv)
         console.print(
             f"\n[bold green]✓ Planilha desduplicada gerada:[/bold green] "
             f"[bold cyan]{dedup_csv}[/bold cyan]"
-        )
-        console.print(
-            f"[dim](Referência rápida atualizada com versão desduplicada: {latest_csv})[/dim]"
         )
     else:
         console.print(
@@ -1463,14 +1450,9 @@ def menu() -> None:  # pragma: no cover
                     raw=False,
                     verbose=False,
                 )
-                with contextlib.suppress(Exception):
-                    shutil.copyfile(out_file, "data/resultados.csv")
                 console.print(
                     f"[bold green]✓ Planilha salva em:[/bold green] "
                     f"[bold cyan]{out_file}[/bold cyan]"
-                )
-                console.print(
-                    "[dim](Cópia de referência rápida atualizada em: data/resultados.csv)[/dim]"
                 )
         elif choice == "6":
             which = Prompt.ask(
@@ -1496,13 +1478,8 @@ def menu() -> None:  # pragma: no cover
                 raw=is_raw,
                 verbose=False,
             )
-            with contextlib.suppress(Exception):
-                shutil.copyfile(out_file, "data/resultados.csv")
             console.print(
                 f"[bold green]✓ Planilha salva em:[/bold green] [bold cyan]{out_file}[/bold cyan]"
-            )
-            console.print(
-                "[dim](Cópia de referência rápida atualizada em: data/resultados.csv)[/dim]"
             )
         elif choice == "7":
             which = Prompt.ask(
