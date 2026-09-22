@@ -375,6 +375,13 @@ def run(
         console.print(f"[red]✗ Error:[/red] {e}")
         raise typer.Exit(1) from None
 
+    def _upsert_source_manifest(target_manifest: Manifest, entry: SourceManifestEntry) -> None:
+        idx = next((i for i, s in enumerate(target_manifest.sources) if s.name == entry.name), None)
+        if idx is not None:
+            target_manifest.sources[idx] = entry
+        else:
+            target_manifest.sources.append(entry)
+
     registry = _get_registry()
     run_id = resume or generate_run_id()
     proto_hash = protocol_sha256(protocol)
@@ -385,13 +392,31 @@ def run(
     raw_storage = RawStorage(DATA_DIR)
     item_storage = ItemStorage(DATA_DIR)
 
-    manifest = Manifest(
-        run_id=run_id,
-        msrkit_version=__version__,
-        protocol_path=protocol,
-        protocol_sha256=proto_hash,
-        started_at=datetime.now(UTC),
-    )
+    completed_sources: set[str] = set()
+    if resume:
+        from msrkit.provenance import load_manifest
+
+        try:
+            manifest = load_manifest(DATA_DIR, resume)
+            console.print(
+                f"[dim]Resuming existing run with {len(manifest.sources)} recorded source(s).[/dim]"
+            )
+            for s in manifest.sources:
+                if s.queries and any(q.items > 0 or q.requests > 0 for q in s.queries):
+                    completed_sources.add(s.name)
+        except FileNotFoundError:
+            console.print(
+                f"[red]✗ Cannot resume: Run '{resume}' not found in data directory.[/red]"
+            )
+            raise typer.Exit(1) from None
+    else:
+        manifest = Manifest(
+            run_id=run_id,
+            msrkit_version=__version__,
+            protocol_path=protocol,
+            protocol_sha256=proto_hash,
+            started_at=datetime.now(UTC),
+        )
 
     if source:
         if source not in config.sources:
@@ -417,6 +442,12 @@ def run(
         console.print(f"\n{'=' * 60}")
         console.print(f"[bold]Source: {source_name}[/bold]")
 
+        if resume and source_name in completed_sources and not source:
+            console.print(
+                f"  [dim]Source '{source_name}' already completed in run {run_id}, skipping.[/dim]"
+            )
+            continue
+
         if source_name not in registry:
             console.print(f"  [red]Unknown adapter: {source_name}[/red]")
             continue
@@ -433,12 +464,12 @@ def run(
 
         if not src_cfg.enabled:
             console.print("  [dim]Disabled in protocol[/dim]")
-            manifest.sources.append(source_entry)
+            _upsert_source_manifest(manifest, source_entry)
             continue
 
         if avail.status == "UNSUPPORTED":
             console.print(f"  [red]{avail.status}: {avail.reason}[/red]")
-            manifest.sources.append(source_entry)
+            _upsert_source_manifest(manifest, source_entry)
             continue
 
         console.print(f"  Status: [{avail.status}] {avail.reason}")
@@ -524,7 +555,7 @@ def run(
             )
 
         adapter.close()
-        manifest.sources.append(source_entry)
+        _upsert_source_manifest(manifest, source_entry)
 
     manifest.finished_at = datetime.now(UTC)
     manifest_path = save_manifest(manifest, DATA_DIR)

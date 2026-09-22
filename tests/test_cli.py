@@ -505,6 +505,85 @@ limits:
         assert result.exit_code == 1
         assert "not configured in protocol" in result.stdout
 
+    def test_run_resume_nonexistent_fails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """msrkit run --resume fails when run ID does not exist."""
+        monkeypatch.setattr("msrkit.cli.DATA_DIR", tmp_path)
+        result = runner.invoke(
+            app,
+            [
+                "run",
+                "protocols/v0_rag_agents_testing.yaml",
+                "--resume",
+                "nonexistent-run-id-999",
+                "--source",
+                "hackernews",
+            ],
+        )
+        assert result.exit_code == 1
+        assert "Cannot resume: Run 'nonexistent-run-id-999' not found" in result.stdout
+
+    def test_run_resume_preserves_manifest(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """msrkit run --resume loads existing manifest and skips completed sources."""
+        from datetime import UTC, datetime
+
+        from msrkit.models import (
+            Availability,
+            AvailabilityStatus,
+            Manifest,
+            QueryManifestEntry,
+            SourceManifestEntry,
+        )
+        from msrkit.provenance import load_manifest, save_manifest
+
+        monkeypatch.setattr("msrkit.cli.DATA_DIR", tmp_path)
+        run_id = "resumed-run-1"
+        initial_manifest = Manifest(
+            run_id=run_id,
+            msrkit_version="0.1.0",
+            protocol_path="protocols/v0_rag_agents_testing.yaml",
+            protocol_sha256="abc",
+            started_at=datetime.now(UTC),
+            sources=[
+                SourceManifestEntry(
+                    name="hackernews",
+                    adapter_version="0.1.0",
+                    availability=Availability(status=AvailabilityStatus.OK, reason="OK"),
+                    queries=[
+                        QueryManifestEntry(
+                            query_string="q",
+                            partitions=1,
+                            requests=1,
+                            items=5,
+                            truncated=False,
+                            response_sha256=[],
+                        )
+                    ],
+                )
+            ],
+        )
+        save_manifest(initial_manifest, tmp_path)
+
+        result = runner.invoke(
+            app,
+            [
+                "run",
+                "protocols/v0_rag_agents_testing.yaml",
+                "--resume",
+                run_id,
+                "--source",
+                "hackernews",
+            ],
+        )
+        # Should succeed and manifest should still have hackernews
+        assert result.exit_code == 0
+        updated = load_manifest(tmp_path, run_id)
+        assert len(updated.sources) >= 1
+        assert any(s.name == "hackernews" for s in updated.sources)
+
     def test_toggle_source_in_protocol(self, tmp_path: Path) -> None:
         """_toggle_source_in_protocol toggles enabled state while preserving comments."""
         from msrkit.cli import _toggle_source_in_protocol

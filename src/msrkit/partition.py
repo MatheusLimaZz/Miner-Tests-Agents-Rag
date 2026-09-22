@@ -29,7 +29,7 @@ def partition_by_date(q: Query) -> list[Query]:
         return [q]
 
     delta = q.until - q.since
-    if delta <= timedelta(days=1):
+    if delta <= timedelta(days=0):
         return [q]
 
     mid = q.since + delta // 2
@@ -88,7 +88,7 @@ def partition(
     # Try splitting by date window first
     if q.since is not None and q.until is not None:
         delta = q.until - q.since
-        if delta > timedelta(days=1):
+        if delta > timedelta(days=0):
             sub_queries = partition_by_date(q)
             result: list[tuple[Query, bool]] = []
             for sq in sub_queries:

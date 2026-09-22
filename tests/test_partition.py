@@ -26,6 +26,21 @@ class TestPartitionByDate:
         assert parts[1].since is not None
         assert parts[0].until < parts[1].since
 
+    def test_two_day_window_split(self) -> None:
+        """A 2-day window can be split into two single-day windows."""
+        q = Query(
+            source="github",
+            terms=["test"],
+            since=date(2023, 6, 15),
+            until=date(2023, 6, 16),
+        )
+        parts = partition_by_date(q)
+        assert len(parts) == 2
+        assert parts[0].since == date(2023, 6, 15)
+        assert parts[0].until == date(2023, 6, 15)
+        assert parts[1].since == date(2023, 6, 16)
+        assert parts[1].until == date(2023, 6, 16)
+
     def test_single_day_not_split(self) -> None:
         """A single-day window is not split."""
         q = Query(
