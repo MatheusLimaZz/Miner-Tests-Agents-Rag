@@ -15,6 +15,8 @@ import re
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
+from msrkit.models import ItemKind
+
 if TYPE_CHECKING:
     from msrkit.models import Item
 
@@ -108,9 +110,11 @@ def deduplicate(items: list[Item]) -> tuple[list[Item], list[Item]]:
             continue
         seen_urls.add(canon_url)
 
-        # Pass 2: Content hash (only when non-empty content exists)
-        has_content = bool((item.title and item.title.strip()) or (item.body and item.body.strip()))
-        if has_content:
+        # Pass 2: Content hash (only when non-empty body content exists)
+        # Items without body (e.g. code search files, title-only link posts) rely
+        # strictly on URL canonicalization to prevent false-positive entity mergers (ADR-012).
+        has_body = bool(item.body and item.body.strip())
+        if has_body and item.kind != ItemKind.CODE:
             c_hash = content_hash(item.title, item.body)
             if c_hash in seen_hashes:
                 duplicates.append(item)

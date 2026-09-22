@@ -130,6 +130,42 @@ class TestDeduplicate:
         assert len(unique) == 2
         assert len(dupes) == 0
 
+    def test_code_files_with_same_filename_different_repos_not_colliding(self) -> None:
+        """Code files in different repos sharing the same filename must NOT be treated as dupes."""
+        item1 = _make_item(
+            "1",
+            "https://github.com/org1/repo1/blob/main/test_rag.py",
+            title="test_rag.py",
+            body=None,
+        )
+        item2 = _make_item(
+            "2",
+            "https://github.com/org2/repo2/blob/main/test_rag.py",
+            title="test_rag.py",
+            body=None,
+        )
+        unique, dupes = deduplicate([item1, item2])
+        assert len(unique) == 2
+        assert len(dupes) == 0
+
+    def test_posts_with_same_title_no_body_different_urls_not_colliding(self) -> None:
+        """Posts with the same generic title but different URLs and no body must not collide."""
+        item1 = _make_item(
+            "1",
+            "https://news.ycombinator.com/item?id=101",
+            title="RAG Evaluation",
+            body=None,
+        )
+        item2 = _make_item(
+            "2",
+            "https://www.reddit.com/r/LocalLLaMA/comments/202",
+            title="RAG Evaluation",
+            body=None,
+        )
+        unique, dupes = deduplicate([item1, item2])
+        assert len(unique) == 2
+        assert len(dupes) == 0
+
 
 # ---------------------------------------------------------------------------
 # Helpers

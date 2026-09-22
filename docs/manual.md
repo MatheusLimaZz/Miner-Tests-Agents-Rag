@@ -450,15 +450,15 @@ Cada publicação minerada é transformada no modelo Pydantic `Item`:
 A literatura cinza apresenta frequentes sobreposições entre diferentes canais (ex: um artigo no Dev.to compartilhado no Hacker News e espelhado via RSS).
 
 ### O Algoritmo de Desduplicação do MSR-Kit:
-1. **Normalização de URL:**
+1. **Passo 1 (Normalização de URL):**
    - O esquema (`http`/`https`) e o domínio são transformados para minúsculas.
    - Parâmetros analíticos de rastreamento são completamente expurgados (`utm_source`, `utm_medium`, `utm_campaign`, `ref`, `source`, `fbclid`, etc.).
-   - Barras no final de rotas são padronizadas.
-2. **Hash de Conteúdo:**
-   - O título e o corpo do texto são normalizados (remoção de múltiplos espaços em branco, quebras de linha excedentes e conversão para minúsculas).
-   - É gerado um hash SHA-256 sobre a string unificada.
-3. **Resolução de Conflitos:**
-   - Quando dois itens de fontes distintas possuem a mesma URL canônica ou o mesmo hash de conteúdo, o item da fonte com maior granularidade de metadados é preservado, e o item duplicado é registrado no log de desduplicação.
+   - Barras no final de rotas são padronizadas (rotas não raiz perdem a barra final; rota raiz `/` é preservada).
+   - Parâmetros de consulta restantes são ordenados alfabeticamente para equivalência determinística.
+2. **Passo 2 (Hash de Conteúdo - Apenas com Corpo de Texto):**
+   - Para evitar fusões falsas-positivas de entidades (ADR-012), o hash de conteúdo SHA-256 (`content_hash`) só é acionado quando há **corpo textual (`body`) não vazio**.
+   - O título e o corpo do texto têm espaços em branco colapsados e são normalizados.
+   - **Proteção para Código e Posts sem Corpo:** Arquivos de código (`ItemKind.CODE`) e publicações estritamente baseadas em links/título dependem exclusivamente da canonicalização de URL. Isso garante que arquivos com nomes universais em repositórios diferentes (como `test_rag.py`, `eval.py`, `conftest.py`) ou posts com títulos genéricos em fontes distintas **nunca sejam incorretamente descartados como duplicatas**.
 
 ---
 
