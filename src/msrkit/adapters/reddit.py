@@ -148,7 +148,8 @@ class RedditAdapter(BaseAdapter):
         total_yielded = 0
         seen_ids: set[str] = set()
 
-        query_text = " OR ".join(q.terms)
+        formatted_terms = [f'"{t}"' if " " in t else t for t in q.terms]
+        query_text = " OR ".join(formatted_terms)
 
         for sub in subreddits:
             if total_yielded >= limit:

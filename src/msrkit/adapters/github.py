@@ -158,9 +158,13 @@ class GitHubAdapter(BaseAdapter):
                         "q": query_string,
                         "per_page": page_size,
                         "page": page,
-                        "sort": "updated",
-                        "order": "desc",
                     }
+                    if kind == "code":
+                        params["sort"] = "indexed"
+                        params["order"] = "desc"
+                    else:
+                        params["sort"] = "updated"
+                        params["order"] = "desc"
 
                     resp = self._governed_get(f"{_BASE_URL}{endpoint}", params=params)
 
@@ -182,7 +186,16 @@ class GitHubAdapter(BaseAdapter):
                     for item in items:
                         if total_yielded >= limit:
                             return
-                        native_id = str(item.get("id", item.get("sha", "")))
+                        if kind == "code":
+                            repo_name = (item.get("repository") or {}).get("full_name") or ""
+                            path = item.get("path") or ""
+                            native_id = (
+                                f"{repo_name}:{path}"
+                                if (repo_name and path)
+                                else str(item.get("sha", ""))
+                            )
+                        else:
+                            native_id = str(item.get("id", ""))
                         if not native_id or native_id in seen_ids:
                             continue
                         seen_ids.add(native_id)
@@ -266,7 +279,7 @@ class GitHubAdapter(BaseAdapter):
         matched = match_terms(terms or [], title=p.get("name"), path=p.get("path"))
 
         return Item(
-            id=Item.make_id(self.name, p.get("sha", "")),
+            id=Item.make_id(self.name, raw.native_id or p.get("sha", "")),
             source=self.name,
             kind=ItemKind.CODE,
             url=p.get("html_url", ""),  # type: ignore[arg-type]
@@ -333,21 +346,24 @@ class GitHubAdapter(BaseAdapter):
 
     def _build_query_string(self, q: Query) -> str:
         """Build GitHub search query string with qualifiers."""
-        parts = [" ".join(q.terms)]
+        kind = q.kind or "repo"
+        parts = [" ".join(q.terms)] if q.terms else []
 
-        if q.since and q.until:
-            parts.append(f"created:{q.since}..{q.until}")
-        elif q.since:
-            parts.append(f"created:>={q.since}")
-        elif q.until:
-            parts.append(f"created:<={q.until}")
+        if kind != "code":
+            if q.since and q.until:
+                parts.append(f"created:{q.since}..{q.until}")
+            elif q.since:
+                parts.append(f"created:>={q.since}")
+            elif q.until:
+                parts.append(f"created:<={q.until}")
 
         # Extra qualifiers
         extra = q.extra
         if extra.get("languages"):
             for lang in extra["languages"]:
                 parts.append(f"language:{lang}")
-        if extra.get("min_stars"):
+
+        if kind == "repo" and extra.get("min_stars"):
             parts.append(f"stars:>={extra['min_stars']}")
 
         return " ".join(parts)
@@ -356,22 +372,25 @@ class GitHubAdapter(BaseAdapter):
         self, q: Query, term: str | None = None, language: str | None = None
     ) -> str:
         """Build GitHub search query string for a single term and language qualifier."""
+        kind = q.kind or "repo"
         parts = []
         if term:
             parts.append(f'"{term}"' if " " in term else term)
         elif q.terms:
             parts.append(" ".join(q.terms))
 
-        if q.since and q.until:
-            parts.append(f"created:{q.since}..{q.until}")
-        elif q.since:
-            parts.append(f"created:>={q.since}")
-        elif q.until:
-            parts.append(f"created:<={q.until}")
+        if kind != "code":
+            if q.since and q.until:
+                parts.append(f"created:{q.since}..{q.until}")
+            elif q.since:
+                parts.append(f"created:>={q.since}")
+            elif q.until:
+                parts.append(f"created:<={q.until}")
 
         if language:
             parts.append(f"language:{language}")
-        if q.extra.get("min_stars"):
+
+        if kind == "repo" and q.extra.get("min_stars"):
             parts.append(f"stars:>={q.extra['min_stars']}")
 
         return " ".join(parts)

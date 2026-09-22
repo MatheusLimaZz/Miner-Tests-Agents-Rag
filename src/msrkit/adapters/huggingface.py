@@ -112,36 +112,44 @@ class HuggingFaceAdapter(BaseAdapter):
                 if total_yielded >= limit:
                     return
 
-                endpoint = f"{_BASE_URL}/{kind}"
-                params: dict[str, Any] = {
+                next_url: str | None = f"{_BASE_URL}/{kind}"
+                params: dict[str, Any] | None = {
                     "search": term,
                     "limit": min(self.policy.max_page_size, limit - total_yielded),
                     "full": "true",
                 }
 
-                resp = self._governed_get(endpoint, params=params)
-                if resp.status_code != 200:
-                    logger.warning("HF search returned %d for %s", resp.status_code, kind)
-                    continue
+                while next_url and total_yielded < limit:
+                    resp = self._governed_get(next_url, params=params)
+                    params = None  # Subsequent page URLs from Link header contain params
+                    if resp.status_code != 200:
+                        logger.warning("HF search returned %d for %s", resp.status_code, kind)
+                        break
 
-                items = resp.json()
-                if not isinstance(items, list):
-                    continue
+                    items = resp.json()
+                    if not isinstance(items, list):
+                        break
 
-                for item in items:
-                    if total_yielded >= limit:
-                        return
-                    item_id = item.get("id", item.get("modelId", ""))
-                    seen_key = f"{kind}:{item_id}"
-                    if not item_id or seen_key in seen_ids:
-                        continue
-                    seen_ids.add(seen_key)
-                    yield self._make_raw_item(
-                        source=self.name,
-                        native_id=str(item_id),
-                        payload={**item, "_hf_kind": kind},
-                    )
-                    total_yielded += 1
+                    for item in items:
+                        if total_yielded >= limit:
+                            return
+                        item_id = item.get("id", item.get("modelId", ""))
+                        seen_key = f"{kind}:{item_id}"
+                        if not item_id or seen_key in seen_ids:
+                            continue
+                        seen_ids.add(seen_key)
+                        yield self._make_raw_item(
+                            source=self.name,
+                            native_id=str(item_id),
+                            payload={**item, "_hf_kind": kind},
+                        )
+                        total_yielded += 1
+
+                    next_url = None
+                    if isinstance(getattr(resp, "links", None), dict):
+                        next_link = resp.links.get("next")
+                        if isinstance(next_link, dict) and "url" in next_link:
+                            next_url = str(next_link["url"])
 
     def normalize(self, raw: RawItem, terms: list[str] | None = None) -> Item:
         """Convert HF model/dataset/space to canonical Item."""

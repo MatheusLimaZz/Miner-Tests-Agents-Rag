@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -827,3 +827,179 @@ class TestSearchLoopsAndQueryBuilding:
         item_so = adapter.normalize(raw_so)
         item_ds = adapter.normalize(raw_ds)
         assert item_so.id != item_ds.id
+
+    def test_github_code_search_omits_created_and_stars_and_sorts_indexed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        adapter = GitHubAdapter()
+        monkeypatch.setattr(
+            adapter, "_env", lambda k: "mock_token" if k == "GITHUB_TOKEN" else None
+        )
+        captured_params: list[dict[str, Any]] = []
+
+        def mock_get(url: str, params: dict[str, Any]) -> MagicMock:
+            captured_params.append(params)
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.json.return_value = {
+                "total_count": 1,
+                "items": [
+                    {
+                        "sha": "abc123sha",
+                        "path": "test/eval.py",
+                        "repository": {"full_name": "owner/repo"},
+                        "html_url": "https://github.com/owner/repo/blob/main/test/eval.py",
+                    }
+                ],
+            }
+            return resp
+
+        monkeypatch.setattr(adapter, "_governed_get", mock_get)
+
+        q = Query(
+            source="github",
+            terms=["rag testing"],
+            kind="code",
+            since=date(2024, 1, 1),
+            until=date(2024, 12, 31),
+            extra={"min_stars": 10},
+            limit=2,
+        )
+        raw_items = list(adapter.search(q))
+        assert len(raw_items) == 1
+        assert raw_items[0].native_id == "owner/repo:test/eval.py"
+        assert len(captured_params) > 0
+        qs = captured_params[0]["q"]
+        assert "created:" not in qs
+        assert "stars:" not in qs
+        assert captured_params[0]["sort"] == "indexed"
+
+    def test_reddit_quotes_multi_word_terms(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        adapter = RedditAdapter()
+        adapter._access_token = "mock_token"
+        captured_params: list[dict[str, Any]] = []
+
+        def mock_get(url: str, params: dict[str, Any]) -> MagicMock:
+            captured_params.append(params)
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.json.return_value = {"data": {"children": []}}
+            return resp
+
+        monkeypatch.setattr(adapter, "_governed_get", mock_get)
+
+        q = Query(
+            source="reddit",
+            terms=["RAG testing", "eval harness", "benchmarking"],
+            extra={"subreddits": ["LocalLLaMA"]},
+            limit=5,
+        )
+        list(adapter.search(q))
+        assert len(captured_params) > 0
+        assert captured_params[0]["q"] == '"RAG testing" OR "eval harness" OR benchmarking'
+
+    def test_bluesky_iterates_terms_and_formats_rfc3339(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        adapter = BlueskyAdapter()
+        adapter._session_token = "mock_jwt"
+        captured_params: list[dict[str, Any]] = []
+
+        def mock_get(url: str, params: dict[str, Any], headers: dict[str, str]) -> MagicMock:
+            captured_params.append(params)
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.json.return_value = {
+                "posts": [
+                    {
+                        "uri": f"at://did:plc:123/app.bsky.feed.post/{len(captured_params)}",
+                        "record": {
+                            "text": "RAG evaluation post",
+                            "createdAt": "2024-05-01T00:00:00Z",
+                        },
+                    }
+                ]
+            }
+            return resp
+
+        monkeypatch.setattr(adapter, "_governed_get", mock_get)
+
+        q = Query(
+            source="bluesky",
+            terms=["RAG testing", "eval harness"],
+            since=date(2024, 1, 1),
+            until=date(2024, 6, 30),
+            limit=5,
+        )
+        raw_items = list(adapter.search(q))
+        assert len(raw_items) == 2
+        assert len(captured_params) == 2
+        assert captured_params[0]["q"] == '"RAG testing"'
+        assert captured_params[0]["since"] == "2024-01-01T00:00:00Z"
+        assert captured_params[0]["until"] == "2024-06-30T23:59:59Z"
+        assert captured_params[1]["q"] == '"eval harness"'
+
+    def test_huggingface_link_header_pagination(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        adapter = HuggingFaceAdapter()
+        calls = 0
+
+        def mock_get(url: str, params: dict[str, Any] | None = None) -> MagicMock:
+            nonlocal calls
+            calls += 1
+            resp = MagicMock()
+            resp.status_code = 200
+            if calls == 1:
+                resp.json.return_value = [{"id": "user/dataset1"}]
+                resp.links = {"next": {"url": "https://huggingface.co/api/datasets?page=2"}}
+            else:
+                resp.json.return_value = [{"id": "user/dataset2"}]
+                resp.links = {}
+            return resp
+
+        monkeypatch.setattr(adapter, "_governed_get", mock_get)
+
+        q = Query(source="huggingface", terms=["rag"], extra={"kinds": ["datasets"]}, limit=5)
+        raw_items = list(adapter.search(q))
+        assert len(raw_items) == 2
+        assert raw_items[0].native_id == "user/dataset1"
+        assert raw_items[1].native_id == "user/dataset2"
+        assert calls == 2
+
+    def test_hackernews_configurable_tags(self) -> None:
+        adapter = HackerNewsAdapter()
+        q_comment = Query(source="hackernews", terms=["rag"], kind="comment")
+        params_comment = adapter._build_params(q_comment, term="rag")
+        assert params_comment["tags"] == "comment"
+
+        q_custom = Query(
+            source="hackernews",
+            terms=["rag"],
+            kind="thread",
+            extra={"tags": "(story,comment)"},
+        )
+        params_custom = adapter._build_params(q_custom, term="rag")
+        assert params_custom["tags"] == "(story,comment)"
+
+    def test_devto_resilient_to_out_of_order_pinned_article(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        adapter = DevToAdapter()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        # Page has a pinned older article followed by fresh articles within range
+        mock_resp.json.return_value = [
+            {"id": 1, "title": "Old Pinned", "published_at": "2020-01-01T00:00:00Z"},
+            {"id": 2, "title": "Fresh RAG", "published_at": "2024-05-01T00:00:00Z"},
+        ]
+        monkeypatch.setattr(adapter, "_governed_get", lambda *args, **kwargs: mock_resp)
+
+        q = Query(
+            source="devto",
+            terms=["RAG"],
+            since=date(2024, 1, 1),
+            extra={"tags": ["rag"]},
+            limit=5,
+        )
+        raw_items = list(adapter.search(q))
+        assert len(raw_items) == 1
+        assert raw_items[0].native_id == "2"

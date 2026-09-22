@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, ClassVar
 
 if TYPE_CHECKING:
@@ -123,54 +123,70 @@ class BlueskyAdapter(BaseAdapter):
 
         limit = q.limit or 5000
         total_yielded = 0
-        cursor: str | None = None
-        query_text = " ".join(q.terms)
+        seen_ids: set[str] = set()
 
-        while total_yielded < limit:
-            params: dict[str, Any] = {
-                "q": query_text,
-                "limit": min(self.policy.max_page_size, 100),
-            }
-            if cursor:
-                params["cursor"] = cursor
-            if q.since:
-                params["since"] = q.since.isoformat()
-            if q.until:
-                params["until"] = q.until.isoformat()
+        search_terms = q.terms if q.terms else [""]
+        for term in search_terms:
+            if total_yielded >= limit:
+                return
 
-            headers = {}
-            if self._session_token:
-                headers["Authorization"] = f"Bearer {self._session_token}"
+            cursor: str | None = None
+            query_text = f'"{term}"' if (term and " " in term) else term
 
-            resp = self._governed_get(
-                f"{_BASE_URL}/app.bsky.feed.searchPosts",
-                params=params,
-                headers=headers,
-            )
+            while total_yielded < limit:
+                params: dict[str, Any] = {
+                    "q": query_text,
+                    "limit": min(self.policy.max_page_size, 100),
+                }
+                if cursor:
+                    params["cursor"] = cursor
+                if q.since:
+                    params["since"] = datetime.combine(q.since, datetime.min.time(), UTC).strftime(
+                        "%Y-%m-%dT%H:%M:%SZ"
+                    )
+                if q.until:
+                    params["until"] = datetime.combine(
+                        q.until, datetime.max.time().replace(microsecond=0), UTC
+                    ).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-            if resp.status_code != 200:
-                logger.warning("Bluesky search returned %d", resp.status_code)
-                break
+                headers = {}
+                if self._session_token:
+                    headers["Authorization"] = f"Bearer {self._session_token}"
 
-            data = resp.json()
-            posts = data.get("posts", [])
-            if not posts:
-                break
-
-            for post in posts:
-                if total_yielded >= limit:
-                    return
-                uri = post.get("uri", "")
-                yield self._make_raw_item(
-                    source=self.name,
-                    native_id=uri,
-                    payload=post,
+                resp = self._governed_get(
+                    f"{_BASE_URL}/app.bsky.feed.searchPosts",
+                    params=params,
+                    headers=headers,
                 )
-                total_yielded += 1
 
-            cursor = data.get("cursor")
-            if not cursor:
-                break
+                if resp.status_code != 200:
+                    logger.warning(
+                        "Bluesky search returned %d for term '%s'", resp.status_code, term
+                    )
+                    break
+
+                data = resp.json()
+                posts = data.get("posts", [])
+                if not posts:
+                    break
+
+                for post in posts:
+                    if total_yielded >= limit:
+                        return
+                    uri = post.get("uri", "")
+                    if not uri or uri in seen_ids:
+                        continue
+                    seen_ids.add(uri)
+                    yield self._make_raw_item(
+                        source=self.name,
+                        native_id=uri,
+                        payload=post,
+                    )
+                    total_yielded += 1
+
+                cursor = data.get("cursor")
+                if not cursor:
+                    break
 
     def normalize(self, raw: RawItem, terms: list[str] | None = None) -> Item:
         """Convert Bluesky post to canonical Item."""

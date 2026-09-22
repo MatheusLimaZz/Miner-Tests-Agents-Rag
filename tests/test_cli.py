@@ -566,6 +566,9 @@ limits:
             ],
         )
         save_manifest(initial_manifest, tmp_path)
+        from msrkit.adapters.hackernews import HackerNewsAdapter
+
+        monkeypatch.setattr(HackerNewsAdapter, "search", lambda *args, **kwargs: iter([]))
 
         result = runner.invoke(
             app,

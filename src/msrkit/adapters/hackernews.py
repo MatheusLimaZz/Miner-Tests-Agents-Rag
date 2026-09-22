@@ -197,11 +197,20 @@ class HackerNewsAdapter(BaseAdapter):
     ) -> dict[str, Any]:
         query_str = term if term is not None else (" OR ".join(q.terms) if q.terms else "")
 
+        tag_filter = q.extra.get("tags")
+        if not tag_filter:
+            if q.kind == "comment":
+                tag_filter = "comment"
+            elif q.kind and q.kind in ("story", "poll", "show_hn", "ask_hn"):
+                tag_filter = q.kind
+            else:
+                tag_filter = "story"
+
         params: dict[str, Any] = {
             "query": query_str,
             "page": page,
             "hitsPerPage": hits_per_page,
-            "tags": "story",  # Default to stories
+            "tags": tag_filter,
         }
 
         # Date filter via numericFilters
