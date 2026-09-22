@@ -12,6 +12,7 @@ services:
     volumes:
       - ./data:/app/data
       - ./protocols:/app/protocols
+      - ./src:/app/src
     env_file:
       - path: .env
         required: false
