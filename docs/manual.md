@@ -117,22 +117,30 @@ Você pode executar o MSR-Kit de duas maneiras: utilizando Docker (totalmente is
 O container oficial utiliza **Ubuntu 24.04 LTS (Noble Numbat)** e Python 3.12.
 
 #### 1. Preparação (Apenas na 1ª vez):
-No terminal da pasta do projeto, construa a imagem local:
+No terminal da pasta do projeto, execute os 2 passos:
 ```bash
+# 1. Construir a imagem local:
 docker compose build
-```
 
-#### 2. Execução Direta no Terminal (PowerShell / CMD / Bash):
-Basta disparar os comandos diretamente do seu terminal no computador. Os dados coletados e planilhas aparecem na pasta `./data`:
+# 2. Criar o container fixo:
+docker compose create msrkit
+```
+> O container fixo `msrkit` é criado mapeando as pastas `./data`, `./protocols` e `./src`. Ele permanece salvo no Docker Desktop e nunca é excluído ao fechar.
+
+#### 2. Execução do Container Fixo:
+Sempre que for utilizar o MSR-Kit, ligue o container com:
 ```bash
-# Abrir o assistente interativo visual:
-docker compose run --rm msrkit msrkit menu
-
-# Ou executar comandos pontuais:
-docker compose run --rm msrkit msrkit sources
-docker compose run --rm msrkit msrkit run protocols/v0_rag_agents_testing.yaml -s devto -l 10
-docker compose run --rm msrkit msrkit export -f csv -o data/resultados.csv
+docker start -ai msrkit
 ```
+- **Terminal Linux direto (`root@...:/app# `):** O container abre instantaneamente sem forçar a abertura do menu.
+- **Execução livre:** Você pode rodar qualquer comando lá dentro:
+  ```bash
+  msrkit menu        # abre o menu interativo
+  msrkit sources     # exibe status das fontes
+  msrkit run protocols/v0_rag_agents_testing.yaml -s hackernews -l 10
+  ```
+- **Atualização ao vivo:** Graças ao volume `./src:/app/src`, qualquer mudança de código feita no computador reflete imediatamente dentro do container.
+- **Para sair:** Digite `exit`. O container apenas pausa de forma limpa.
 
 ---
 
@@ -161,8 +169,7 @@ Após a instalação, o comando binário `msrkit` estará disponível no seu ter
 O menu interativo foi construído com a biblioteca `rich` e foi desenhado para pesquisadores que desejam minerar, gerenciar fontes e exportar dados sem precisar memorizar comandos ou flags de linha de comando.
 
 Para acessar:
-- **No container Docker:** `msrkit menu`
-- **No Docker pelo host:** `docker compose run --rm msrkit msrkit menu`
+- **No container Docker fixo:** `msrkit menu` (após ligar com `docker start -ai msrkit`)
 - **No Python nativo:** `msrkit menu`
 
 ```text

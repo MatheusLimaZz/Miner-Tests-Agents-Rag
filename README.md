@@ -51,32 +51,41 @@ Esta é a opção mais limpa e moderna. O MSR-Kit roda dentro de um container Li
 
 ### 📦 Preparação Inicial (Apenas na 1ª vez)
 
-Certifique-se de que o **Docker Desktop** está aberto. No terminal da pasta do projeto, construa a imagem:
+Certifique-se de que o **Docker Desktop** está aberto. No terminal da pasta do projeto, execute os 2 passos:
 
 ```bash
+# 1. Construir a imagem local:
 docker compose build
+
+# 2. Criar o container fixo:
+docker compose create msrkit
 ```
-> **O que faz:** O Docker baixa a imagem oficial do **Ubuntu 24.04 LTS**, instala o Python 3.12, as dependências e empacota o MSR-Kit na imagem local `msrkit:ubuntu`.
+> **O que faz:** Cria o container fixo `msrkit` mapeando as pastas `./data`, `./protocols` e `./src`. O container fica salvo no Docker Desktop e **nunca é excluído** ao fechar.
 
 ---
 
-### 🚀 Como Executar no Terminal (PowerShell / CMD / Bash)
+### 🚀 Executando o Container Fixo
 
-Você dispara os comandos diretamente do terminal do seu computador, sem precisar entrar no container. As planilhas e dados coletados aparecem imediatamente na pasta `./data`:
+Sempre que você quiser usar o MSR-Kit, execute no terminal:
 
 ```bash
-# 1. Abrir o assistente interativo visual (Recomendado):
-docker compose run --rm msrkit msrkit menu
-
-# 2. Ou executar qualquer comando diretamente:
-docker compose run --rm msrkit msrkit sources
-docker compose run --rm msrkit msrkit validate protocols/v0_rag_agents_testing.yaml
-docker compose run --rm msrkit msrkit plan protocols/v0_rag_agents_testing.yaml --source hackernews
-docker compose run --rm msrkit msrkit run protocols/v0_rag_agents_testing.yaml --source hackernews --limit 10
-docker compose run --rm msrkit msrkit dedupe
-docker compose run --rm msrkit msrkit stats
-docker compose run --rm msrkit msrkit export -f csv -o data/resultados.csv
+docker start -ai msrkit
 ```
+
+- **Início instantâneo (< 0.5s):** O container "acorda" imediatamente e abre direto na linha de comando do Linux (`root@...:/app# `).
+- **Sem tela forçada:** Ele não abre direto no menu, permitindo que você rode o comando que preferir:
+  ```bash
+  # Abrir o assistente interativo visual:
+  msrkit menu
+
+  # Ou executar comandos pontuais:
+  msrkit sources
+  msrkit plan protocols/v0_rag_agents_testing.yaml --source hackernews
+  msrkit run protocols/v0_rag_agents_testing.yaml --source hackernews --limit 10
+  msrkit stats
+  ```
+- **Sempre Atualizado ao Vivo:** Como o volume `./src:/app/src` está montado, qualquer alteração ou melhoria feita no código-fonte no seu computador reflete **instantaneamente** dentro do container, sem precisar rodar `build` novamente.
+- **Para desligar o container:** Basta digitar `exit`. O container apenas pausa (fica dormindo no Docker Desktop), preservando todo o ambiente.
 
 ---
 
@@ -121,9 +130,8 @@ msrkit --help
 Para quem não quer decorar sintaxe de terminal, o MSR-Kit oferece um menu visual interativo.
 
 Para abrir:
-- **No Docker (dentro do container fixo):** `msrkit menu` (após rodar `docker start -ai msrkit`)
-- **No Docker (direto do terminal do host):** `docker compose run --rm msrkit msrkit menu`
-- **No Python Nativo:** `msrkit menu`
+- **No Docker (container fixo):** Digite `msrkit menu` dentro do container (após `docker start -ai msrkit`).
+- **No Python Nativo:** Digite `msrkit menu`.
 
 ```text
 ╭────────────────────────────────────────────────────────╮
