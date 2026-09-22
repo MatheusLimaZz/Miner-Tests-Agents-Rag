@@ -918,7 +918,7 @@ def _toggle_source_in_protocol(protocol_path: str, source_name: str, new_state: 
     return False
 
 
-def _manage_sources_menu(protocol_path: str) -> None:
+def _manage_sources_menu(protocol_path: str) -> None:  # pragma: no cover
     """Interactive screen to toggle sources on/off based on availability."""
     from rich.prompt import Prompt
 
@@ -1011,7 +1011,7 @@ def _manage_sources_menu(protocol_path: str) -> None:
             console.print("[red]Entrada inválida! Digite um número.[/red]")
 
 
-def _interactive_mining_menu(protocol_path: str) -> None:
+def _interactive_mining_menu(protocol_path: str) -> None:  # pragma: no cover
     """Interactive mining execution with custom quantity and source selection."""
     from rich.prompt import Prompt
 
@@ -1130,7 +1130,7 @@ def _interactive_mining_menu(protocol_path: str) -> None:
 
 
 @app.command(name="menu")
-def menu() -> None:
+def menu() -> None:  # pragma: no cover
     """Interactive terminal menu to navigate MSR-Kit easily."""
     from rich.panel import Panel
     from rich.prompt import Prompt

@@ -518,3 +518,18 @@ limits:
         monkeypatch.setattr(HackerNewsAdapter, "search", mock_search)
         # Should execute cleanly without Manifest validation error for OptionInfo run_id
         run(protocol="protocols/v0_rag_agents_testing.yaml", source="hackernews", limit=1)
+
+    def test_dedupe_all_runs(
+        self, tmp_path: Path, sample_items: list[Item], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """msrkit dedupe --all deduplicates items across all historical runs."""
+        monkeypatch.setattr("msrkit.cli.DATA_DIR", tmp_path)
+        storage = ItemStorage(tmp_path)
+        storage.save_items(sample_items[:2], "run-1")
+        storage.save_items(sample_items[1:], "run-2")
+
+        result = runner.invoke(app, ["dedupe", "--all"])
+        assert result.exit_code == 0
+        assert "Deduplicating across 2 historical runs" in result.stdout
+        assert (tmp_path / "items" / "consolidated" / "items_deduped.jsonl").exists()
+
