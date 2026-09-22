@@ -127,51 +127,74 @@ class GitHubAdapter(BaseAdapter):
     def search(self, q: Query) -> Iterator[RawItem]:
         """Search GitHub, paginating up to 10 pages (1000 results)."""
         kind = q.kind or "repo"
+        if kind == "code" and not self._env("GITHUB_TOKEN"):
+            logger.info("GitHub code search requires GITHUB_TOKEN; skipping unauthenticated code.")
+            return
+
         endpoint = _KIND_ENDPOINT.get(kind, "/search/repositories")
-        query_string = self._build_query_string(q)
         limit = q.limit or 5000
         total_yielded = 0
+        seen_ids: set[str] = set()
 
-        for page in range(1, (self.policy.max_pages or 10) + 1):
-            if total_yielded >= limit:
-                break
+        terms_to_search = q.terms if (q.terms and len(q.terms) > 1) else [None]
+        languages = q.extra.get("languages") or [None]
 
-            params: dict[str, Any] = {
-                "q": query_string,
-                "per_page": self.policy.max_page_size,
-                "page": page,
-                "sort": "updated",
-                "order": "desc",
-            }
-
-            resp = self._governed_get(f"{_BASE_URL}{endpoint}", params=params)
-
-            if resp.status_code == 422:
-                logger.warning("GitHub: validation error for query=%s", query_string)
-                break
-            if resp.status_code != 200:
-                logger.warning("GitHub search returned %d", resp.status_code)
-                break
-
-            data = resp.json()
-            items = data.get("items", [])
-            if not items:
-                break
-
-            for item in items:
+        for term in terms_to_search:
+            for lang in languages:
                 if total_yielded >= limit:
                     return
-                native_id = str(item.get("id", item.get("sha", "")))
-                yield self._make_raw_item(
-                    source=self.name,
-                    native_id=native_id,
-                    payload={**item, "_search_kind": kind},
-                )
-                total_yielded += 1
 
-            # Check if we got fewer results than page size → no more pages
-            if len(items) < self.policy.max_page_size:
-                break
+                if term is not None or lang is not None:
+                    query_string = self._build_single_query_string(q, term=term, language=lang)
+                else:
+                    query_string = self._build_query_string(q)
+
+                for page in range(1, (self.policy.max_pages or 10) + 1):
+                    if total_yielded >= limit:
+                        return
+
+                    page_size = min(self.policy.max_page_size, limit - total_yielded)
+                    params: dict[str, Any] = {
+                        "q": query_string,
+                        "per_page": page_size,
+                        "page": page,
+                        "sort": "updated",
+                        "order": "desc",
+                    }
+
+                    resp = self._governed_get(f"{_BASE_URL}{endpoint}", params=params)
+
+                    if resp.status_code == 422:
+                        logger.warning("GitHub: validation error for query=%s", query_string)
+                        break
+                    if resp.status_code == 401:
+                        logger.warning("GitHub: 401 unauthorized for %s (token required)", kind)
+                        return
+                    if resp.status_code != 200:
+                        logger.warning("GitHub search returned %d", resp.status_code)
+                        break
+
+                    data = resp.json()
+                    items = data.get("items", [])
+                    if not items:
+                        break
+
+                    for item in items:
+                        if total_yielded >= limit:
+                            return
+                        native_id = str(item.get("id", item.get("sha", "")))
+                        if not native_id or native_id in seen_ids:
+                            continue
+                        seen_ids.add(native_id)
+                        yield self._make_raw_item(
+                            source=self.name,
+                            native_id=native_id,
+                            payload={**item, "_search_kind": kind},
+                        )
+                        total_yielded += 1
+
+                    if len(items) < page_size:
+                        break
 
     def normalize(self, raw: RawItem, terms: list[str] | None = None) -> Item:
         """Convert GitHub search result to canonical Item."""
@@ -319,6 +342,30 @@ class GitHubAdapter(BaseAdapter):
                 parts.append(f"language:{lang}")
         if extra.get("min_stars"):
             parts.append(f"stars:>={extra['min_stars']}")
+
+        return " ".join(parts)
+
+    def _build_single_query_string(
+        self, q: Query, term: str | None = None, language: str | None = None
+    ) -> str:
+        """Build GitHub search query string for a single term and language qualifier."""
+        parts = []
+        if term:
+            parts.append(f'"{term}"' if " " in term else term)
+        elif q.terms:
+            parts.append(" ".join(q.terms))
+
+        if q.since and q.until:
+            parts.append(f"created:{q.since}..{q.until}")
+        elif q.since:
+            parts.append(f"created:>={q.since}")
+        elif q.until:
+            parts.append(f"created:<={q.until}")
+
+        if language:
+            parts.append(f"language:{language}")
+        if q.extra.get("min_stars"):
+            parts.append(f"stars:>={q.extra['min_stars']}")
 
         return " ".join(parts)
 

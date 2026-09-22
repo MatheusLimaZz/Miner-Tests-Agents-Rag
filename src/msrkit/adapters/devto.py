@@ -118,9 +118,21 @@ class DevToAdapter(BaseAdapter):
                 if not articles:
                     break
 
+                hit_older_than_since = False
                 for article in articles:
                     if total_yielded >= limit:
                         return
+
+                    pub_str = article.get("published_at") or article.get("created_at")
+                    if q.since and pub_str:
+                        try:
+                            pub_dt = datetime.fromisoformat(pub_str.replace("Z", "+00:00"))
+                            if pub_dt.date() < q.since:
+                                hit_older_than_since = True
+                                break
+                        except (ValueError, TypeError):
+                            pass
+
                     if q.terms:
                         art_title = article.get("title") or ""
                         art_desc = article.get("description") or ""
@@ -132,6 +144,9 @@ class DevToAdapter(BaseAdapter):
                         payload=article,
                     )
                     total_yielded += 1
+
+                if hit_older_than_since:
+                    break
 
                 # dev.to returns empty list when no more pages
                 if len(articles) < per_page:

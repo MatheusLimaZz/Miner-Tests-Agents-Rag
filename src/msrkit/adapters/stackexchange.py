@@ -122,47 +122,56 @@ class StackExchangeAdapter(BaseAdapter):
         limit = q.limit or 5000
         total_yielded = 0
 
+        terms_to_search = q.terms if (q.terms and len(q.terms) > 1) else [None]
+        seen_ids: set[str] = set()
+
         for site in sites:
-            if total_yielded >= limit:
-                break
-            page = 1
-            max_pages = self.policy.max_pages or 25
+            for term in terms_to_search:
+                if total_yielded >= limit:
+                    return
+                page = 1
+                max_pages = self.policy.max_pages or 25
 
-            while page <= max_pages and total_yielded < limit:
-                params = self._build_params(
-                    q, site=site, page=page, pagesize=self.policy.max_page_size
-                )
-                resp = self._governed_get(f"{_BASE_URL}/search/advanced", params=params)
-
-                if resp.status_code != 200:
-                    logger.warning(
-                        "SE search returned %d for site=%s page=%d",
-                        resp.status_code,
-                        site,
-                        page,
+                while page <= max_pages and total_yielded < limit:
+                    page_size = min(self.policy.max_page_size, limit - total_yielded)
+                    params = self._build_params(
+                        q, site=site, page=page, pagesize=page_size, term=term
                     )
-                    break
+                    resp = self._governed_get(f"{_BASE_URL}/search/advanced", params=params)
 
-                data = resp.json()
-                self._handle_backoff(data)
+                    if resp.status_code != 200:
+                        logger.warning(
+                            "SE search returned %d for site=%s page=%d",
+                            resp.status_code,
+                            site,
+                            page,
+                        )
+                        break
 
-                items = data.get("items", [])
-                if not items:
-                    break
+                    data = resp.json()
+                    self._handle_backoff(data)
 
-                for item in items:
-                    if total_yielded >= limit:
-                        return
-                    yield self._make_raw_item(
-                        source=self.name,
-                        native_id=str(item.get("question_id", "")),
-                        payload={**item, "_site": site},
-                    )
-                    total_yielded += 1
+                    items = data.get("items", [])
+                    if not items:
+                        break
 
-                if not data.get("has_more", False):
-                    break
-                page += 1
+                    for item in items:
+                        if total_yielded >= limit:
+                            return
+                        qid = str(item.get("question_id", ""))
+                        if not qid or qid in seen_ids:
+                            continue
+                        seen_ids.add(qid)
+                        yield self._make_raw_item(
+                            source=self.name,
+                            native_id=qid,
+                            payload={**item, "_site": site},
+                        )
+                        total_yielded += 1
+
+                    if not data.get("has_more", False):
+                        break
+                    page += 1
 
     def normalize(self, raw: RawItem, terms: list[str] | None = None) -> Item:
         """Convert SE question to canonical Item."""
@@ -217,10 +226,12 @@ class StackExchangeAdapter(BaseAdapter):
         site: str,
         page: int,
         pagesize: int,
+        term: str | None = None,
     ) -> dict[str, Any]:
         """Build Stack Exchange search parameters."""
+        query_text = term if term is not None else " ".join(q.terms)
         params: dict[str, Any] = {
-            "q": " ".join(q.terms),
+            "q": query_text,
             "site": site,
             "page": page,
             "pagesize": pagesize,

@@ -416,6 +416,71 @@ class TestSearchLoopsAndQueryBuilding:
         assert len(raw_items) == 1
         assert raw_items[0].native_id == "12345"
 
+    def test_github_single_query_building(self) -> None:
+        from datetime import date
+
+        adapter = GitHubAdapter()
+        q = Query(
+            source="github",
+            terms=["RAG testing", "eval harness"],
+            since=date(2024, 1, 1),
+            until=date(2024, 6, 30),
+            extra={"languages": ["Python", "TypeScript"], "min_stars": 5},
+        )
+        qs = adapter._build_single_query_string(q, term="RAG testing", language="Python")
+        assert '"RAG testing"' in qs
+        assert "created:2024-01-01..2024-06-30" in qs
+        assert "language:Python" in qs
+        assert "stars:>=5" in qs
+
+    def test_github_search_multiple_terms(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        adapter = GitHubAdapter()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "total_count": 1,
+            "items": [
+                {
+                    "id": 12345,
+                    "full_name": "owner/repo",
+                    "html_url": "https://github.com/owner/repo",
+                }
+            ],
+        }
+        monkeypatch.setattr(adapter, "_governed_get", lambda *args, **kwargs: mock_resp)
+
+        q = Query(
+            source="github",
+            terms=["RAG testing", "eval harness"],
+            kind="repo",
+            extra={"languages": ["Python"]},
+            limit=2,
+        )
+        raw_items = list(adapter.search(q))
+        assert len(raw_items) == 1
+        assert raw_items[0].native_id == "12345"
+
+    def test_devto_early_stop_since(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from datetime import date
+
+        adapter = DevToAdapter()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = [
+            {"id": 1, "title": "Old Article", "published_at": "2020-01-01T00:00:00Z"}
+        ]
+        monkeypatch.setattr(adapter, "_governed_get", lambda *args, **kwargs: mock_resp)
+
+        q = Query(
+            source="devto",
+            terms=["rag"],
+            since=date(2024, 1, 1),
+            extra={"tags": ["rag"]},
+            limit=5,
+        )
+        raw_items = list(adapter.search(q))
+        assert len(raw_items) == 0
+
     def test_stackexchange_search_loop(self, monkeypatch: pytest.MonkeyPatch) -> None:
         adapter = StackExchangeAdapter()
         mock_resp = MagicMock()

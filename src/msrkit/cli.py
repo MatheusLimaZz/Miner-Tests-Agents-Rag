@@ -854,6 +854,10 @@ def export(
             "author_handle",
             "created_at",
             "updated_at",
+            "matched_terms",
+            "stars",
+            "votes",
+            "tags",
         ]
         if include_body:
             fields.append("body")
@@ -867,6 +871,26 @@ def export(
                 row = item.model_dump(mode="json")
                 row["url"] = str(item.url)
                 row["kind"] = item.kind.value
+                row["matched_terms"] = (
+                    ", ".join(sorted(set(hit.term for hit in item.matched_terms)))
+                    if item.matched_terms
+                    else ""
+                )
+                row["stars"] = (
+                    item.engagement.stars
+                    if (item.engagement and item.engagement.stars is not None)
+                    else ""
+                )
+                row["votes"] = (
+                    item.engagement.votes
+                    if (item.engagement and item.engagement.votes is not None)
+                    else ""
+                )
+                row["tags"] = (
+                    ", ".join(item.tech.tags)
+                    if (item.tech and item.tech.tags)
+                    else ""
+                )
                 writer.writerow({k: row.get(k) for k in fields})
     elif fmt == "duckdb":
         from msrkit.storage import DuckDBStorage
