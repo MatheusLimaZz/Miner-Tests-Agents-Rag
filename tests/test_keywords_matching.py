@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from msrkit.adapters.devto import DevToAdapter
 from msrkit.adapters.github import GitHubAdapter
 from msrkit.adapters.hackernews import HackerNewsAdapter
+from msrkit.adapters.rss import RSSAdapter
 from msrkit.adapters.stackexchange import StackExchangeAdapter
 from msrkit.keywords import match_terms
-from msrkit.models import RawItem
+from msrkit.models import Query, RawItem
+
+if TYPE_CHECKING:
+    import pytest
 
 
 class TestKeywordsMatching:
@@ -141,3 +146,60 @@ class TestAdapterNormalizeWithTerms:
         item = adapter.normalize(raw, terms=["eval harness"])
         assert len(item.matched_terms) >= 1
         assert item.matched_terms[0].term == "eval harness"
+
+    def test_rss_normalize_terms(self) -> None:
+        raw = RawItem(
+            source="rss",
+            native_id="https://blog.example.com/rag-eval",
+            payload={
+                "title": "Continuous RAG evaluation in CI/CD",
+                "summary": "How to run automated evaluation for RAG apps.",
+                "tags": ["rag", "llm"],
+                "published": "Mon, 01 Jan 2024 00:00:00 +0000",
+                "link": "https://blog.example.com/rag-eval",
+            },
+            fetched_at=datetime.now(UTC),
+        )
+        adapter = RSSAdapter()
+        item = adapter.normalize(raw, terms=["RAG evaluation"])
+        assert len(item.matched_terms) >= 1
+        assert item.matched_terms[0].term == "RAG evaluation"
+
+    def test_rss_search_filters_terms_and_dates(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """RSSAdapter.search filters out entries that do not match terms or date bounds."""
+        from unittest.mock import MagicMock
+
+        feed_xml = """<?xml version="1.0" encoding="utf-8"?>
+        <rss version="2.0">
+            <channel>
+                <title>Tech Feed</title>
+                <item>
+                    <title>Cooking with Cast Iron</title>
+                    <link>https://example.com/cooking</link>
+                    <description>Irrelevant cooking post</description>
+                    <pubDate>Mon, 15 Jan 2024 12:00:00 GMT</pubDate>
+                </item>
+                <item>
+                    <title>Complete Guide to RAG testing</title>
+                    <link>https://example.com/rag-testing</link>
+                    <description>Methods for evaluate RAG pipelines</description>
+                    <pubDate>Mon, 15 Jan 2024 12:00:00 GMT</pubDate>
+                </item>
+            </channel>
+        </rss>"""
+
+        adapter = RSSAdapter()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = feed_xml
+        mock_resp.content = feed_xml.encode("utf-8")
+        monkeypatch.setattr(adapter, "_governed_get", lambda url: mock_resp)
+
+        q = Query(
+            source="rss",
+            terms=["RAG testing"],
+            extra={"feeds": ["https://example.com/feed.xml"]},
+        )
+        results = list(adapter.search(q))
+        assert len(results) == 1
+        assert results[0].payload["title"] == "Complete Guide to RAG testing"

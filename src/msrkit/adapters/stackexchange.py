@@ -51,9 +51,9 @@ class StackExchangeAdapter(BaseAdapter):
         requires_auth=False,
         auth_env_vars=["STACKEXCHANGE_KEY"],
         rate_limit=RateLimit(
-            requests=1,
+            requests=30,
             per_seconds=60,
-            burst=1,
+            burst=5,
             daily_cap=300,  # sem chave; com chave é 10.000
         ),
         max_results_per_query=None,

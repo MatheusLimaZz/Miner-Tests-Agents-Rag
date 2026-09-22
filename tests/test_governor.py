@@ -131,3 +131,30 @@ class TestGovernor:
         # Create new governor from same state dir
         gov2 = Governor("test", rate_limit, clock=clock, state_dir=tmp_path)
         assert gov2.daily_count == 3
+
+    def test_handle_reset_at(self) -> None:
+        """Governor sleeps until reset_at when remaining is 0."""
+        clock = FakeClock(start=1000.0)
+        rate_limit = RateLimit(requests=10, per_seconds=60, burst=10)
+        gov = Governor("test", rate_limit, clock=clock)
+
+        waited = gov.handle_rate_limit_response(remaining=0, reset_at=1045.0)
+        assert waited == 45.0
+        assert clock.total_slept == 45.0
+
+    def test_handle_reset_at_excessive_raises_quota_exhausted(self) -> None:
+        """Excessive reset_at wait (>3600s) raises QuotaExhaustedError to avoid freezing."""
+        clock = FakeClock(start=1000.0)
+        rate_limit = RateLimit(requests=10, per_seconds=60, burst=10)
+        gov = Governor("test", rate_limit, clock=clock)
+
+        with pytest.raises(QuotaExhaustedError):
+            gov.handle_rate_limit_response(remaining=0, reset_at=5000.0)
+
+    def test_real_clock_returns_unix_timestamp(self) -> None:
+        """RealClock returns Unix timestamp (> 1.7e9), not monotonic uptime."""
+        from msrkit.governor import RealClock
+
+        rc = RealClock()
+        t = rc.now()
+        assert t > 1_700_000_000.0

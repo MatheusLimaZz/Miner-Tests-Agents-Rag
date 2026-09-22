@@ -173,3 +173,19 @@ class TestStorageExtras:
         items = raw_storage.read_raw("github", "run_alpha", "p1")
         assert len(items) == 1
         assert items[0].native_id == "10"
+
+    def test_raw_storage_offset_caching(self, tmp_path: Path) -> None:
+        """RawStorage caches offsets in memory to avoid O(N^2) decompression."""
+        raw_storage = RawStorage(tmp_path)
+        for i in range(3):
+            raw = RawItem(
+                source="hackernews",
+                native_id=str(i),
+                payload={"id": i},
+                fetched_at=datetime.now(UTC),
+            )
+            ref = raw_storage.save_raw(raw, "run_beta", "p2")
+            assert ref.endswith(f":{i}")
+
+        items = raw_storage.read_raw("hackernews", "run_beta", "p2")
+        assert len(items) == 3

@@ -109,21 +109,43 @@ class RSSAdapter(BaseAdapter):
                 entry_id = str(entry.get("id") or entry.get("link") or "")
                 if not entry_id or entry_id in seen_ids:
                     continue
-                seen_ids.add(entry_id)
 
                 published_val = (
                     entry.get("published") or entry.get("updated") or entry.get("pubDate") or ""
                 )
+
+                # Filter by date window if specified
+                if published_val and (q.since or q.until):
+                    try:
+                        dt = parsedate_to_datetime(published_val)
+                        entry_date = dt.date()
+                        if q.until and entry_date > q.until:
+                            continue
+                        if q.since and entry_date < q.since:
+                            continue
+                    except (ValueError, TypeError):
+                        pass
+
+                # Filter by terms if specified (RSS feeds lack server-side full-text search)
+                title_val = entry.get("title", "")
+                summary_val = entry.get("summary", "")
+                entry_tags = [
+                    t.get("term", "") if isinstance(t, dict) else str(t)
+                    for t in (entry.get("tags") or [])
+                ]
+                if q.terms and not match_terms(
+                    q.terms, title=title_val, body=summary_val, tags=entry_tags
+                ):
+                    continue
+
+                seen_ids.add(entry_id)
                 payload = {
-                    "title": entry.get("title", ""),
+                    "title": title_val,
                     "link": entry.get("link", ""),
-                    "summary": entry.get("summary", ""),
+                    "summary": summary_val,
                     "published": published_val,
                     "author": entry.get("author", ""),
-                    "tags": [
-                        t.get("term", "") if isinstance(t, dict) else str(t)
-                        for t in (entry.get("tags") or [])
-                    ],
+                    "tags": entry_tags,
                     "feed_url": feed_url,
                 }
 

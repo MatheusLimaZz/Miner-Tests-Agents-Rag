@@ -40,7 +40,7 @@ class RealClock:
     """Real wall-clock implementation."""
 
     def now(self) -> float:
-        return time.monotonic()
+        return time.time()
 
     def sleep(self, seconds: float) -> None:
         time.sleep(seconds)
@@ -221,6 +221,11 @@ class Governor:
             now = self._clock.now()
             sleep_time = max(0.0, reset_at - now)
             if sleep_time > 0:
+                if sleep_time > 3600.0:
+                    raise QuotaExhaustedError(
+                        f"Rate limit reset for '{self.adapter_name}' is in {sleep_time:.0f}s "
+                        f"(exceeds 1h max wait)."
+                    )
                 logger.info(
                     "Governor[%s]: quota exhausted, sleeping %.1fs until reset",
                     self.adapter_name,

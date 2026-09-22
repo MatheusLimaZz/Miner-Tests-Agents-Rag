@@ -196,6 +196,25 @@ class TestDevToAdapterUnit:
         assert len(raw_items) == 1
         assert raw_items[0].native_id == "1"
 
+    def test_normalize_with_null_user(self) -> None:
+        """dev.to normalize does not crash when user payload is null/None."""
+        adapter = DevToAdapter()
+        raw = RawItem(
+            source="devto",
+            native_id="999",
+            payload={
+                "id": 999,
+                "title": "Anonymous article",
+                "description": "Article without user object",
+                "user": None,
+                "url": "https://dev.to/article/999",
+            },
+            fetched_at=datetime.now(UTC),
+        )
+        item = adapter.normalize(raw)
+        assert item.author_handle is None
+        assert item.title == "Anonymous article"
+
 
 class TestRedditAdapterUnit:
     """Unit tests for Reddit adapter."""

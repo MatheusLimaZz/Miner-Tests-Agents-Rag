@@ -29,6 +29,7 @@ class RawStorage:
 
     def __init__(self, data_dir: Path) -> None:
         self.data_dir = data_dir
+        self._offsets: dict[str, int] = {}
 
     def save_raw(
         self,
@@ -52,11 +53,16 @@ class RawStorage:
 
         line = raw_item.model_dump_json() + "\n"
 
-        # Count existing lines for offset
-        offset = 0
-        if file_path.exists():
-            with gzip.open(file_path, "rt", encoding="utf-8") as f:
-                offset = sum(1 for _ in f)
+        offset_key = f"{raw_item.source}:{run_id}:{partition_hash}"
+        if offset_key in self._offsets:
+            offset = self._offsets[offset_key]
+            self._offsets[offset_key] += 1
+        else:
+            offset = 0
+            if file_path.exists():
+                with gzip.open(file_path, "rt", encoding="utf-8") as f:
+                    offset = sum(1 for _ in f)
+            self._offsets[offset_key] = offset + 1
 
         with gzip.open(file_path, "at", encoding="utf-8") as f:
             f.write(line)

@@ -248,7 +248,6 @@ class GitHubAdapter(BaseAdapter):
             engagement=Engagement(
                 stars=p.get("stargazers_count"),
                 forks=p.get("forks_count"),
-                views=p.get("watchers_count"),
             ),
             tech=TechContext(
                 language=p.get("language"),

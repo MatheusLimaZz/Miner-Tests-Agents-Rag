@@ -190,7 +190,7 @@ class DevToAdapter(BaseAdapter):
             url=p.get("url", ""),  # type: ignore[arg-type]
             title=p.get("title"),
             body=p.get("description"),  # metadata_only: don't store full body
-            author_handle=p.get("user", {}).get("username"),
+            author_handle=(p.get("user") or {}).get("username"),
             created_at=created_at,
             engagement=Engagement(
                 reactions=p.get("public_reactions_count"),

@@ -475,17 +475,49 @@ def run(
         console.print(f"  Status: [{avail.status}] {avail.reason}")
 
         queries = config.build_queries(source_name)
+        partitioned_queries = []
+        for q in queries:
+            partitioned_queries.extend(adapter.partition(q))
+        queries = partitioned_queries
         if limit is not None:
             for q in queries:
                 q.limit = limit
         console.print(f"  Queries to execute: {len(queries)}")
 
+        total_source_items = 0
+        total_source_requests = 0
+
         for qi, query in enumerate(queries, 1):
-            console.print(f"  Query {qi}/{len(queries)}: {query.terms[:3]}...")
+            if total_source_items >= config.limits.max_items_per_source:
+                console.print(
+                    f"  [dim]Source '{source_name}' item limit reached "
+                    f"({total_source_items} items). Skipping remaining queries.[/dim]"
+                )
+                break
+            if total_source_requests >= config.limits.max_requests_per_source:
+                console.print(
+                    f"  [yellow]Source '{source_name}' request limit reached "
+                    f"({total_source_requests} requests). Skipping remaining queries.[/yellow]"
+                )
+                break
+
+            remaining_for_source = config.limits.max_items_per_source - total_source_items
+            query.limit = min(query.limit or 5000, remaining_for_source)
+
+            query_label = f"[{query.kind}] " if query.kind else ""
+            console.print(f"  Query {qi}/{len(queries)}: {query_label}{query.terms[:3]}...")
             items_collected = 0
             raw_items_count = 0
             req_before = getattr(adapter, "request_count", 0)
             response_hashes: list[str] = []
+
+            query_display_parts = []
+            if query.kind:
+                query_display_parts.append(f"kind:{query.kind}")
+            if query.since or query.until:
+                query_display_parts.append(f"window:{query.since}..{query.until}")
+            query_display_parts.append(" ".join(query.terms))
+            query_display = " ".join(query_display_parts)
 
             try:
                 for raw_item in adapter.search(query):
@@ -504,9 +536,12 @@ def run(
                         item = adapter.normalize(raw_item, terms=config.terms)
                         # Update provenance
                         item.provenance.run_id = run_id
-                        item.provenance.query_string = " ".join(query.terms)
-                        item.provenance.partition = f"q{qi}"
+                        item.provenance.query_string = query_display
+                        item.provenance.partition = partition_hash
                         item.provenance.raw_ref = raw_ref
+                        item.provenance.response_sha256 = getattr(
+                            adapter, "last_response_sha256", ""
+                        )
 
                         # Post-normalization term matching
                         if not item.matched_terms and config.terms:
@@ -522,6 +557,7 @@ def run(
 
                         item_storage.save_items([item], run_id)
                         items_collected += 1
+                        total_source_items += 1
                     except Exception as e:
                         logging.getLogger(__name__).warning(
                             "Normalization error for %s/%s: %s",
@@ -530,7 +566,7 @@ def run(
                             e,
                         )
 
-                    if items_collected >= config.limits.max_items_per_source:
+                    if total_source_items >= config.limits.max_items_per_source:
                         break
 
             except SourceUnsupportedError as e:
@@ -540,8 +576,11 @@ def run(
                 logging.getLogger(__name__).exception("Collection error")
 
             requests_made = max(getattr(adapter, "request_count", 0) - req_before, 0)
+            total_source_requests += requests_made
+            if hasattr(adapter, "pop_response_hashes"):
+                response_hashes = adapter.pop_response_hashes()
             query_entry = QueryManifestEntry(
-                query_string=" ".join(query.terms),
+                query_string=query_display,
                 partitions=1,
                 requests=requests_made,
                 items=items_collected,
@@ -632,11 +671,16 @@ def normalize(
         partitions = raw_storage.list_partitions(source_entry.name, run_id)
         for part_hash in partitions:
             raw_items = raw_storage.read_raw(source_entry.name, run_id, part_hash)
+            raw_file_path = (
+                raw_storage.data_dir / "raw" / source_entry.name / run_id / f"{part_hash}.jsonl.gz"
+            )
             normalized = []
-            for raw in raw_items:
+            for line_idx, raw in enumerate(raw_items):
                 try:
                     item = adapter.normalize(raw, terms=terms)
                     item.provenance.run_id = run_id
+                    item.provenance.partition = part_hash
+                    item.provenance.raw_ref = f"{raw_file_path}:{line_idx}"
                     if not item.matched_terms and terms:
                         from msrkit.keywords import match_terms
 

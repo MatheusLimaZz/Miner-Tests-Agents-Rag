@@ -59,11 +59,24 @@ class BaseAdapter(ABC):
         self._governor = governor
         self._client: httpx.Client | None = None
         self._request_count = 0
+        self._response_hashes: list[str] = []
+        self._last_response_sha256: str = ""
 
     @property
     def request_count(self) -> int:
         """Total number of HTTP requests executed by this adapter instance."""
         return self._request_count
+
+    @property
+    def last_response_sha256(self) -> str:
+        """SHA-256 hash of the most recent HTTP response."""
+        return self._last_response_sha256
+
+    def pop_response_hashes(self) -> list[str]:
+        """Return and clear accumulated response SHA-256 hashes."""
+        hashes = list(self._response_hashes)
+        self._response_hashes.clear()
+        return hashes
 
     @property
     def client(self) -> httpx.Client:
@@ -156,6 +169,8 @@ class BaseAdapter(ABC):
 
         response = self._request_with_retry(url, params=params, headers=headers)
         self._request_count += 1
+        self._last_response_sha256 = self._hash_response(response.content)
+        self._response_hashes.append(self._last_response_sha256)
 
         # Handle rate limit response headers
         if self._governor and response.status_code in (429, 403):

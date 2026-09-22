@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from typer.testing import CliRunner
@@ -17,6 +17,7 @@ from msrkit.models import (
     ItemKind,
     Manifest,
     Provenance,
+    Query,
     RawItem,
     SourceManifestEntry,
 )
@@ -734,3 +735,116 @@ limits:
         result = runner.invoke(app, ["export", "--run", "run-1", "-f", "csv", "-o", "test.csv"])
         assert result.exit_code == 1
         assert "Permissão negada" in result.stdout
+
+    def test_run_enforces_source_level_limit_across_queries(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """msrkit run --limit limits items at the source level, not per-query."""
+        monkeypatch.setattr("msrkit.cli.DATA_DIR", tmp_path)
+        from msrkit.adapters.github import GitHubAdapter
+
+        def mock_search(self: GitHubAdapter, query: Query) -> Any:
+            for i in range(5):
+                yield RawItem(
+                    source="github",
+                    native_id=f"gh-{query.kind}-{i}",
+                    payload={
+                        "id": f"gh-{query.kind}-{i}",
+                        "name": f"Repo {i}",
+                        "full_name": f"owner/repo-{query.kind}-{i}",
+                        "html_url": "https://github.com/owner/repo",
+                        "created_at": "2024-01-01T00:00:00Z",
+                    },
+                    fetched_at=datetime.now(UTC),
+                )
+
+        monkeypatch.setattr(GitHubAdapter, "search", mock_search)
+
+        result = runner.invoke(
+            app,
+            [
+                "run",
+                "protocols/v0_rag_agents_testing.yaml",
+                "--source",
+                "github",
+                "--limit",
+                "3",
+            ],
+        )
+        assert result.exit_code == 0
+        assert "Collected: 3 items" in result.stdout
+
+        runs = [p.name for p in (tmp_path / "runs").iterdir() if p.is_dir()]
+        assert len(runs) == 1
+        item_storage = ItemStorage(tmp_path)
+        items = item_storage.read_items(runs[0])
+        assert len(items) == 3
+        # Ensure provenance.partition matches the disk partition and is readable via RawStorage
+        raw_storage = RawStorage(tmp_path)
+        for item in items:
+            raw_list = raw_storage.read_raw(item.source, runs[0], item.provenance.partition)
+            assert len(raw_list) > 0
+
+    def test_base_adapter_tracks_response_hashes(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """BaseAdapter tracks SHA-256 of HTTP responses for manifest provenance."""
+        from unittest.mock import MagicMock
+
+        from msrkit.adapters.devto import DevToAdapter
+
+        adapter = DevToAdapter()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.content = b'{"hello": "world"}'
+        mock_resp.json.return_value = []
+        monkeypatch.setattr(adapter, "_request_with_retry", lambda *args, **kwargs: mock_resp)
+
+        adapter._governed_get("https://dev.to/api/articles")
+        expected_sha = adapter._hash_response(b'{"hello": "world"}')
+        assert adapter.last_response_sha256 == expected_sha
+        assert adapter.pop_response_hashes() == [expected_sha]
+        assert adapter.pop_response_hashes() == []
+
+    def test_normalize_preserves_provenance_raw_ref_and_partition(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """msrkit normalize populates raw_ref and partition in item provenance."""
+        monkeypatch.setattr("msrkit.cli.DATA_DIR", tmp_path)
+        run_id = "test-normalize-prov"
+        raw_storage = RawStorage(tmp_path)
+        raw = RawItem(
+            source="hackernews",
+            native_id="456",
+            payload={
+                "objectID": "456",
+                "title": "RAG evaluation post",
+                "created_at_i": 1700000000,
+                "_tags": ["story"],
+            },
+            fetched_at=datetime(2024, 6, 1, tzinfo=UTC),
+        )
+        raw_storage.save_raw(raw, run_id, "partA")
+
+        manifest = Manifest(
+            run_id=run_id,
+            msrkit_version="0.1.0",
+            protocol_path="protocols/v0_rag_agents_testing.yaml",
+            protocol_sha256="abc",
+            started_at=datetime.now(UTC),
+            sources=[
+                SourceManifestEntry(
+                    name="hackernews",
+                    adapter_version="0.1.0",
+                    availability=Availability(status=AvailabilityStatus.OK, reason="OK"),
+                )
+            ],
+        )
+        save_manifest(manifest, tmp_path)
+
+        res = runner.invoke(app, ["normalize", "--run", run_id])
+        assert res.exit_code == 0
+
+        item_storage = ItemStorage(tmp_path)
+        items = item_storage.read_items(run_id)
+        assert len(items) == 1
+        assert items[0].provenance.partition == "partA"
+        assert items[0].provenance.raw_ref.endswith("partA.jsonl.gz:0")
