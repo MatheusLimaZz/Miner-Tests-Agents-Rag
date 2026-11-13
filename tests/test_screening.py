@@ -285,7 +285,8 @@ class TestScreenCommands:
         )
         assert r.exit_code == 0, r.stdout
         assert "ordenação por relevância forçada para 'random'" in r.stdout
-        assert "order: random" in r.stdout
+        normalized_out = " ".join(r.stdout.split())
+        assert "order: random" in normalized_out
         assert "blind: yes" in r.stdout
 
 

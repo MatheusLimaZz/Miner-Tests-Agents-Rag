@@ -383,14 +383,14 @@ def load_package(path: Path, gazetteer_path: Path | None = None) -> Package:
 
     skipped: Counter[str] = Counter()
     items: list[Item] = []
-    for line in text("corpus/items.jsonl").splitlines():
+    for line in text("corpus/items.jsonl").split("\n"):
         if line.strip():
             try:
                 items.append(Item.model_validate_json(line))
             except ValidationError:
                 skipped["items"] += 1
     detections: list[Detection] = []
-    for line in text("evidence/detections.jsonl").splitlines():
+    for line in text("evidence/detections.jsonl").split("\n"):
         if line.strip():
             try:
                 detections.append(Detection.model_validate_json(line))
@@ -398,7 +398,7 @@ def load_package(path: Path, gazetteer_path: Path | None = None) -> Package:
                 skipped["detections"] += 1
     repos = [
         json.loads(line)
-        for line in text("evidence/github_repos.jsonl").splitlines()
+        for line in text("evidence/github_repos.jsonl").split("\n")
         if line.strip()
     ]
 
