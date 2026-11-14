@@ -129,3 +129,31 @@ def test_repo_template_skips_empty_repos(tmp_path: Path) -> None:
     )
     queries = load_protocol(proto).build_queries("github")
     assert [q.terms[0] for q in queries] == ["repo:owner/valid is:issue"]
+
+
+def test_self_tools_by_repo() -> None:
+    gaz = Gazetteer.model_validate(
+        {
+            "version": "1",
+            "tools": [
+                {
+                    "id": "ragas",
+                    "name": "Ragas",
+                    "family": "eval",
+                    "repos": ["VibrantLabsAI/Ragas", "explodinggradients/ragas"],
+                },
+                {
+                    "id": "deepeval",
+                    "name": "DeepEval",
+                    "family": "eval",
+                    "repos": ["confident-ai/deepeval"],
+                },
+                {"id": "no-repo", "name": "NoRepo", "family": "eval"},
+            ],
+        }
+    )
+    mapping = gaz.self_tools_by_repo()
+    assert mapping["vibrantlabsai/ragas"] == {"ragas"}
+    assert mapping["explodinggradients/ragas"] == {"ragas"}
+    assert mapping["confident-ai/deepeval"] == {"deepeval"}
+    assert "no-repo" not in mapping

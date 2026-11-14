@@ -24,10 +24,11 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import date
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import BaseModel
 
+from msrkit.dedupe import canonicalize_url
 from msrkit.extract import summarize
 from msrkit.prisma import build_flow
 
@@ -37,6 +38,20 @@ if TYPE_CHECKING:
     from msrkit.enrich import RepoSignals
     from msrkit.extract import Detection
     from msrkit.models import Item, Manifest, SourceManifestEntry
+
+# Ensure RepoSignals has reused_from dynamically if not present (ADR-054)
+try:
+    from msrkit.enrich import RepoSignals
+
+    if "reused_from" not in RepoSignals.model_fields:
+        from pydantic.fields import FieldInfo
+
+        RepoSignals.model_fields["reused_from"] = FieldInfo(
+            annotation=cast("Any", str | None), default=None
+        )
+        RepoSignals.model_rebuild(force=True)
+except Exception:
+    pass
 
 TOP_TERMS = 15
 TOP_ENTRIES = 15
@@ -55,6 +70,8 @@ class SourceSummary(BaseModel):
     truncated: dict[str, int] = {}  # truncation reason -> queries
     failed: int = 0  # queries with failed partitions or not completed
     literal: dict[str, int] = {}  # literal query label (template prefix) -> planned queries
+    enabled: bool | None = None  # None: manifest older than `enabled_sources`
+    skip_reason: str = ""  # why no query ran, when none did
 
     @property
     def not_executed(self) -> int:
@@ -77,6 +94,7 @@ class EvidenceSummary(BaseModel):
     repos_enriched: int
     repos_with_ci: int
     repos_with_tests: int
+    repos_reused: int = 0  # signals copied from an earlier run (ADR-054)
     detections: dict[str, int]  # level -> detections
     items_with_detection: int
     top: list[EntrySummary]
@@ -94,6 +112,8 @@ class MiningReport(BaseModel):
     until: str | None = None
     window_overridden: bool = False  # MSRKIT_WINDOW_* changed the protocol window
     run_options: dict[str, Any] = {}
+    census: list[str] = []  # sources collected whole, without the per-query cap
+    strata: str = "none"  # "year": date-filtered queries ran once per year (ADR-055)
     terms: dict[str, list[str]] = {}  # language -> protocol terms
     sources: list[SourceSummary] = []
     identified: int
@@ -107,6 +127,15 @@ class MiningReport(BaseModel):
     oldest: str | None
     newest: str | None
     out_of_window: dict[str, int]  # source -> unique items dated outside the window
+    # The protocol file's own window, when MSRKIT_WINDOW_* replaced it for this run.
+    protocol_since: str | None = None
+    protocol_until: str | None = None
+    outside_protocol_window: int = 0  # dated unique items outside the protocol window
+    # Earlier runs in data/ (e.g. the daily RSS accumulation restored from cache).
+    earlier_runs: int = 0
+    new_items: int | None = None  # unique items whose URL no earlier run had
+    accumulated: int | None = None  # distinct URLs over earlier runs and this one
+    seen_before: dict[str, int] = {}  # source -> unique items an earlier run also had
     term_hits: dict[str, int]  # term -> unique items that matched it
     term_languages: dict[str, int]  # "en", "pt", "en+pt"...; "" = no term matched
     concepts: dict[str, int]  # concept group -> unique items; "" = no concept
@@ -120,11 +149,34 @@ def _as_date(value: Any) -> date | None:
     return value if isinstance(value, date) else date.fromisoformat(str(value)[:10])
 
 
-def _source_summary(src: SourceManifestEntry, unique: int) -> SourceSummary:
+def _skip_reason(
+    name: str, status: str, reason: str, enabled: list[str] | None, groups: dict[str, str]
+) -> str:
+    """Why a source ran no query: excluded from this run, or unavailable, or neither."""
+    if enabled is None:
+        return f"{status}: {reason}"
+    group = groups.get(name)
+    if group == "paid":
+        return "fonte paga, fora da coleta (grupo `paid`)"
+    if group == "unavailable":
+        return f"indisponível (grupo `unavailable`): {reason}"
+    if name not in enabled:
+        if groups:
+            return "fora desta execução (não está em `MSRKIT_SOURCES_PUBLIC` nem `_MANUAL`)"
+        return "desativada no protocolo"
+    if status != "OK":
+        return f"habilitada, mas {status}: {reason}"
+    return "habilitada e disponível, mas nenhuma consulta foi executada"
+
+
+def _source_summary(
+    src: SourceManifestEntry, unique: int, enabled: list[str] | None, groups: dict[str, str]
+) -> SourceSummary:
     queries = src.queries
+    status = src.availability.status.value
     return SourceSummary(
         name=src.name,
-        status=src.availability.status.value,
+        status=status,
         reason=src.availability.reason,
         planned=len(src.planned),
         executed=len(queries),
@@ -142,6 +194,10 @@ def _source_summary(src: SourceManifestEntry, unique: int) -> SourceSummary:
                 if p.get("raw")
             )
         ),
+        enabled=None if enabled is None else src.name in enabled,
+        skip_reason=""
+        if queries
+        else _skip_reason(src.name, status, src.availability.reason, enabled, groups),
     )
 
 
@@ -160,6 +216,7 @@ def _evidence(
         repos_enriched=len(signals),
         repos_with_ci=sum(s.has_ci for s in signals.values()),
         repos_with_tests=sum(s.has_tests for s in signals.values()),
+        repos_reused=sum(getattr(s, "reused_from", None) is not None for s in signals.values()),
         detections=dict(sorted(Counter(d.level for d in detections).items())),
         items_with_detection=len({d.item_id for d in detections}),
         top=rows[:TOP_ENTRIES],
@@ -175,12 +232,23 @@ def build_report(
     discard_file: Path,
     signals: dict[str, RepoSignals] | None = None,
     detections: list[Detection] | None = None,
+    protocol_window: tuple[str, str] | None = None,
+    earlier_urls: set[str] | None = None,
+    earlier_runs: int = 0,
 ) -> MiningReport:
-    """Summarize a run. `items` are the run's items, `pool` the deduplicated ones."""
+    """Summarize a run. `items` are the run's items, `pool` the deduplicated ones.
+
+    `protocol_window` is the protocol file's (since, until), read without the
+    MSRKIT_WINDOW_* overrides; `earlier_urls` are the item URLs of `earlier_runs`
+    previous runs, to count what this run added.
+    """
     flow = build_flow(run_id, manifest, items, pool, dedupe_report, discard_file, {}, set())
     eff = manifest.effective_protocol if manifest else {}
     window = eff.get("window") or {}
     since, until = _as_date(window.get("since")), _as_date(window.get("until"))
+    p_since, p_until = (_as_date(d) for d in protocol_window or (None, None))
+    if (p_since, p_until) == (since, until):
+        p_since = p_until = None  # same window: nothing to contrast
 
     terms: dict[str, list[str]] = {}
     if eff.get("terms"):
@@ -190,8 +258,10 @@ def build_report(
         bucket += [t for t in lexicon if t not in bucket]
 
     unique_by_source = Counter(it.source for it in pool)
+    enabled = eff.get("enabled_sources")
+    groups = eff.get("source_groups") or {}
     sources = [
-        _source_summary(src, unique_by_source[src.name])
+        _source_summary(src, unique_by_source[src.name], enabled, groups)
         for src in (manifest.sources if manifest else [])
     ]
 
@@ -202,6 +272,7 @@ def build_report(
     term_languages: Counter[str] = Counter()
     concepts: Counter[str] = Counter()
     dates: list[date] = []
+    outside_protocol = 0
     for it in pool:
         by_source_kind.setdefault(it.source, Counter())[it.kind.value] += 1
         if it.created_at is not None:
@@ -210,10 +281,21 @@ def build_report(
             by_year[str(day.year)] += 1
             if (since and day < since) or (until and day > until):
                 out_of_window[it.source] += 1
+            if (p_since and day < p_since) or (p_until and day > p_until):
+                outside_protocol += 1
         term_hits.update({h.term for h in it.matched_terms})
         langs = sorted({h.lang for h in it.matched_terms if h.lang})
         term_languages["+".join(langs) if it.matched_terms else ""] += 1
         concepts.update(it.concepts or [""])
+
+    new_items = accumulated = None
+    seen_before: Counter[str] = Counter()
+    if earlier_runs:
+        earlier = {canonicalize_url(u) for u in earlier_urls or set()}
+        current = {canonicalize_url(str(it.url)) for it in pool}
+        new_items, accumulated = len(current - earlier), len(current | earlier)
+        seen_before.update({s: 0 for s in unique_by_source})
+        seen_before.update(it.source for it in pool if canonicalize_url(str(it.url)) in earlier)
 
     started = manifest.started_at if manifest else None
     finished = manifest.finished_at if manifest else None
@@ -231,6 +313,8 @@ def build_report(
             v.startswith("MSRKIT_WINDOW") for v in (manifest.env_overrides if manifest else [])
         ),
         run_options=manifest.run_options if manifest else {},
+        census=list(eff.get("census_sources") or []),
+        strata=eff.get("strata") or "none",
         terms=terms,
         sources=sources,
         identified=flow.total_identified,
@@ -245,6 +329,13 @@ def build_report(
         oldest=min(dates).isoformat() if dates else None,
         newest=max(dates).isoformat() if dates else None,
         out_of_window=dict(out_of_window.most_common()),
+        protocol_since=p_since.isoformat() if p_since else None,
+        protocol_until=p_until.isoformat() if p_until else None,
+        outside_protocol_window=outside_protocol,
+        earlier_runs=earlier_runs,
+        seen_before=dict(seen_before),
+        new_items=new_items,
+        accumulated=accumulated,
         term_hits=dict(term_hits.most_common()),
         term_languages=dict(term_languages.most_common()),
         concepts=dict(concepts.most_common()),
@@ -264,6 +355,8 @@ def _warnings(report: MiningReport, manifest: Manifest | None) -> list[str]:
     elif manifest.finished_at is None:
         out.append("A execução não registrou o término (interrompida ou ainda em andamento).")
     for s in report.sources:
+        if s.enabled and s.status == "OK" and not s.executed:
+            out.append(f"{s.name}: habilitada e disponível, mas nenhuma consulta foi executada.")
         if s.not_executed:
             out.append(
                 f"{s.name}: {s.not_executed} de {s.planned} consultas planejadas não foram "
@@ -290,6 +383,13 @@ def _warnings(report: MiningReport, manifest: Manifest | None) -> list[str]:
         detail = ", ".join(f"{s} {n}" for s, n in report.out_of_window.items())
         out.append(
             f"{sum(report.out_of_window.values())} itens únicos têm data fora da janela ({detail})."
+        )
+    if report.protocol_since or report.protocol_until:
+        out.append(
+            f"A janela desta execução ({report.since} a {report.until}) difere da do protocolo "
+            f"({report.protocol_since} a {report.protocol_until}): "
+            f"{report.outside_protocol_window} itens únicos ficam fora da janela do protocolo e "
+            "só entram no corpus do estudo com desvio registrado."
         )
     if report.duplicates is None:
         out.append("Deduplicação não executada (`msrkit dedupe`): os únicos são os itens brutos.")
@@ -334,6 +434,11 @@ def _summary(r: MiningReport) -> list[str]:
         + (f" e {_n(dup)} eram duplicatas" if dup is not None else "")
         + f", restando **{_n(r.unique)} itens únicos**."
     )
+    if r.new_items is not None:
+        text += (
+            f" Destes, {_n(r.new_items)} não apareciam nas {_n(r.earlier_runs)} execuções"
+            f" anteriores; o acumulado soma {_n(r.accumulated or 0)} itens."
+        )
     if ev := r.evidence:
         if ev.repos_enriched:
             text += f" O enriquecimento analisou {_n(ev.repos_enriched)} repositórios do GitHub."
@@ -351,6 +456,11 @@ def _time(r: MiningReport) -> list[str]:
         f"- Janela de publicação buscada: **{window}**"
         + (" (ajustada por variável de ambiente `MSRKIT_WINDOW_*`)" if r.window_overridden else "")
     )
+    if r.protocol_since or r.protocol_until:
+        lines.append(
+            f"- Janela do protocolo: **{r.protocol_since} a {r.protocol_until}** "
+            f"({_n(r.outside_protocol_window)} itens únicos fora dela)"
+        )
     lines.append(
         f"- Execução: {_when(r.started_at)} → {_when(r.finished_at)} ({_duration(r.duration_s)})"
     )
@@ -384,7 +494,11 @@ def _places(r: MiningReport) -> list[str]:
     skipped = [s for s in r.sources if not s.executed]
     if skipped:
         lines += ["Fontes não consultadas:", ""]
-        lines += [f"- **{s.name}** ({s.status}): {_cell(s.reason)}" for s in skipped]
+        for s in skipped:
+            if s.enabled is None:
+                lines.append(f"- **{s.name}** ({s.status}): {_cell(s.reason)}")
+            else:
+                lines.append(f"- **{s.name}**: {_cell(s.skip_reason)}")
         lines.append("")
     if r.by_source_kind:
         lines += [
@@ -410,7 +524,17 @@ def _searched(r: MiningReport) -> list[str]:
             labels = ", ".join(f"{k} ({v})" for k, v in s.literal.items())
             lines.append(f"- **Consultas literais em {s.name}** (protocolo `queries:`): {labels}")
     options = ", ".join(f"`{k}={v}`" for k, v in r.run_options.items()) or "nenhuma"
-    lines += [f"- Opções da execução: {options}", ""]
+    lines.append(f"- Opções da execução: {options}")
+    if r.strata == "year":
+        lines.append(
+            "- Amostra estratificada por ano: cada consulta das fontes que filtram por data "
+            "rodou uma vez por ano da janela, cada ano com o limite por consulta"
+        )
+    if r.census:
+        lines.append(
+            f"- Coletadas inteiras na janela, sem o limite por consulta: {', '.join(r.census)}"
+        )
+    lines.append("")
 
     lang_of = {t: lang for lang, lexicon in r.terms.items() for t in lexicon}
     if r.term_hits:
@@ -447,6 +571,29 @@ def _counts(r: MiningReport) -> list[str]:
         for reason, n in r.duplicates.items():
             lines.append(f"| − Duplicatas ({reason}) | {_n(n)} |")
     lines += [f"| **Itens únicos** | **{_n(r.unique)}** |", ""]
+    if r.new_items is not None:
+        lines += [
+            "### Acúmulo entre execuções",
+            "",
+            f"- Execuções anteriores em `data/`: {_n(r.earlier_runs)}",
+            f"- Itens desta execução que nenhuma anterior trouxe: **{_n(r.new_items)}** "
+            f"de {_n(r.unique)}",
+            f"- Total acumulado (URLs distintas em todas as execuções): {_n(r.accumulated or 0)}",
+            "",
+        ]
+    if r.seen_before:
+        lines += [
+            "Itens únicos que alguma execução anterior também trouxe, por fonte (o quanto a "
+            "busca se repete entre coletas):",
+            "",
+            "| Fonte | Itens únicos | Também em anteriores | % |",
+            "|---|---:|---:|---:|",
+        ]
+        for source, seen in r.seen_before.items():
+            unique = sum(r.by_source_kind.get(source, {}).values())
+            share = f"{seen / unique:.0%}" if unique else "—"
+            lines.append(f"| {source} | {_n(unique)} | {_n(seen)} | {share} |")
+        lines.append("")
     if r.concepts:
         lines += [
             "Conceitos do protocolo nos itens únicos:",
@@ -458,14 +605,18 @@ def _counts(r: MiningReport) -> list[str]:
         lines.append("")
     if ev := r.evidence:
         levels = " · ".join(f"{lvl} {_n(n)}" for lvl, n in ev.detections.items()) or "nenhuma"
-        lines += [
-            "### Evidência (enriquecimento e extração)",
-            "",
-            f"- Repositórios do GitHub enriquecidos: {_n(ev.repos_enriched)} "
-            f"(com CI: {_n(ev.repos_with_ci)}; com testes: {_n(ev.repos_with_tests)})",
-            f"- Detecções: {levels}, em {_n(ev.items_with_detection)} itens",
-            "",
-        ]
+        lines += ["### Evidência (enriquecimento e extração)", ""]
+        if ev.repos_enriched:
+            reused = (
+                f"; {_n(ev.repos_reused)} reaproveitados de execuções anteriores"
+                if ev.repos_reused
+                else ""
+            )
+            lines.append(
+                f"- Repositórios do GitHub enriquecidos: {_n(ev.repos_enriched)} "
+                f"(com CI: {_n(ev.repos_with_ci)}; com testes: {_n(ev.repos_with_tests)}{reused})"
+            )
+        lines += [f"- Detecções: {levels}, em {_n(ev.items_with_detection)} itens", ""]
         if ev.top:
             lines += [
                 f"Entradas do gazetteer com mais unidades (até {TOP_ENTRIES}; unidade = "

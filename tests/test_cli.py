@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import Any
 
 import pytest
 from typer.testing import CliRunner
@@ -23,9 +24,6 @@ from msrkit.models import (
 )
 from msrkit.provenance import save_manifest
 from msrkit.storage import ItemStorage, RawStorage
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 runner = CliRunner()
 
@@ -1019,7 +1017,18 @@ class TestPartitionCheckpoint:
 
         calls: list[str] = []
         state = {"crash": True}
-        proto = "protocols/v0_rag_agents_testing.yaml"
+        (tmp_path / "gazetteer.yaml").write_text(
+            Path("protocols/gazetteer.yaml").read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        proto_file = tmp_path / "protocol_resume.yaml"
+        proto_file.write_text(
+            Path("protocols/v0_rag_agents_testing.yaml")
+            .read_text(encoding="utf-8")
+            .replace("strata: year", "strata: none"),
+            encoding="utf-8",
+        )
+        proto = str(proto_file)
         from msrkit.config import load_protocol
 
         broken = load_protocol(proto).all_terms()[1]  # the second partition fails
@@ -1061,6 +1070,80 @@ class TestPartitionCheckpoint:
         items = ItemStorage(tmp_path).read_items(run_id)
         assert len(items) == 6  # partial item of the broken partition was dropped
         assert len({it.id for it in items}) == 6
+
+    def test_resume_deduplicates_already_collected_items(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """--resume populates seen_item_ids from ItemStorage.read_items to avoid dupes."""
+        from msrkit.adapters.hackernews import HackerNewsAdapter
+
+        monkeypatch.setattr("msrkit.cli.DATA_DIR", tmp_path)
+
+        (tmp_path / "gazetteer.yaml").write_text(
+            Path("protocols/gazetteer.yaml").read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        proto_file = tmp_path / "protocol_resume.yaml"
+        proto_file.write_text(
+            Path("protocols/v0_rag_agents_testing.yaml")
+            .read_text(encoding="utf-8")
+            .replace("strata: year", "strata: none"),
+            encoding="utf-8",
+        )
+        proto = str(proto_file)
+
+        from msrkit.config import load_protocol
+
+        terms = load_protocol(proto).all_terms()[:2]
+
+        def two_partitions(self: Any, q: Query) -> list[Query]:
+            return [q.model_copy(update={"terms": [t]}) for t in terms]
+
+        state = {"crash": True}
+
+        def search(self: Any, q: Query) -> Any:
+            # Both partitions return a shared item with objectID "shared-1"
+            yield RawItem(
+                source="hackernews",
+                native_id="shared-1",
+                payload={"objectID": "shared-1", "title": "Shared Item", "_tags": ["story"]},
+                fetched_at=datetime.now(UTC),
+            )
+            if q.terms[0] == terms[1]:
+                if state["crash"]:
+                    raise RuntimeError("simulated error on partition 2")
+                yield RawItem(
+                    source="hackernews",
+                    native_id="part2-unique",
+                    payload={
+                        "objectID": "part2-unique",
+                        "title": "Part 2 Unique",
+                        "_tags": ["story"],
+                    },
+                    fetched_at=datetime.now(UTC),
+                )
+
+        monkeypatch.setattr(HackerNewsAdapter, "partition", two_partitions)
+        monkeypatch.setattr(HackerNewsAdapter, "search", search)
+
+        # Run 1: partition 1 completes, partition 2 crashes
+        result = runner.invoke(app, ["run", proto, "--source", "hackernews"])
+        assert result.exit_code == 0
+        run_id = next(p.name for p in (tmp_path / "runs").iterdir())
+        items_run1 = ItemStorage(tmp_path).read_items(run_id)
+        assert len(items_run1) == 1
+        assert items_run1[0].id == Item.make_id("hackernews", "shared-1")
+
+        # Resume: partition 2 runs again, returns "shared-1" (deduped) and "part2-unique"
+        state["crash"] = False
+        result = runner.invoke(app, ["run", proto, "--source", "hackernews", "--resume", run_id])
+        assert result.exit_code == 0
+        items_resumed = ItemStorage(tmp_path).read_items(run_id)
+        assert len(items_resumed) == 2
+        assert [it.id for it in items_resumed] == [
+            Item.make_id("hackernews", "shared-1"),
+            Item.make_id("hackernews", "part2-unique"),
+        ]
 
 
 def test_module_entry_point_runs() -> None:
@@ -1145,3 +1228,16 @@ def test_extract_preserves_existing_detections_on_stripped_signals(
     assert res_force.exit_code == 0
     assert "Preserving existing" not in res_force.stdout
     assert len(det_file.read_text(encoding="utf-8").strip().splitlines()) == 0
+
+
+def test_msrkit_data_dir_env_var(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """MSRKIT_DATA_DIR environment variable overrides msrkit.cli.DATA_DIR."""
+    import importlib
+
+    import msrkit.cli
+
+    monkeypatch.setattr("msrkit.cli.DATA_DIR", msrkit.cli.DATA_DIR)
+    monkeypatch.setenv("MSRKIT_DATA_DIR", str(tmp_path))
+    importlib.reload(msrkit.cli)
+    expected = tmp_path.resolve()
+    assert expected == msrkit.cli.DATA_DIR

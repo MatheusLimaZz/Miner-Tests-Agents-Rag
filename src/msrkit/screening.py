@@ -263,8 +263,12 @@ def export_sheet(
                 "matched_terms": (
                     "" if blind else ", ".join(sorted({h.term for h in item.matched_terms}))
                 ),
-                "has_ci": "" if item.tech.has_ci is None else str(item.tech.has_ci).lower(),
-                "contributors": "" if item.tech.contributors is None else item.tech.contributors,
+                "has_ci": (
+                    "" if blind or item.tech.has_ci is None else str(item.tech.has_ci).lower()
+                ),
+                "contributors": (
+                    "" if blind or item.tech.contributors is None else item.tech.contributors
+                ),
                 "coder": coder,
                 **extra_columns.get(item.id, {}),
             }

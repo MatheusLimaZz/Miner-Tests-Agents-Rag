@@ -184,6 +184,21 @@ def merge_date_ranges(queries: list[Query]) -> tuple[date | None, date | None]:
     )
 
 
+def split_by_year(q: Query) -> list[Query]:
+    """One query per calendar year of the window, clipped to it (ADR-055).
+
+    A query without both dates, or inside a single year, is returned as is.
+    """
+    if q.since is None or q.until is None or q.since.year == q.until.year:
+        return [q]
+    return [
+        q.model_copy(
+            update={"since": max(q.since, date(y, 1, 1)), "until": min(q.until, date(y, 12, 31))}
+        )
+        for y in range(q.since.year, q.until.year + 1)
+    ]
+
+
 def split_by_term(q: Query) -> list[Query]:
     """Split a multi-term query into one query per term.
 

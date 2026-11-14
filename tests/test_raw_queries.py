@@ -134,7 +134,7 @@ class TestGitHubRawQuery:
             limit=5,
         )
         list(adapter.search(q))
-        assert sent == ['"import deepeval"']
+        assert sent == ['"import deepeval" is:issue']  # issue type is required (ADR-049)
 
 
 class TestValidate:

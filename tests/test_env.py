@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import Any
 
 import pytest
 from typer.testing import CliRunner
@@ -14,11 +16,25 @@ from msrkit.config import load_protocol
 from msrkit.envfile import load_dotenv, parse_dotenv
 from msrkit.models import Query, RawItem
 
-if TYPE_CHECKING:
-    from pathlib import Path
-
 PROTO = "protocols/v0_rag_agents_testing.yaml"
 runner = CliRunner()
+
+
+def _protocol_copy(tmp_path: Path, change: Callable[[dict[str, Any]], None]) -> str:
+    """A copy of the sample protocol in tmp_path, edited by `change`."""
+    import yaml
+
+    data = yaml.safe_load(Path(PROTO).read_text(encoding="utf-8"))
+    data["gazetteer"] = str(Path(PROTO).parent.resolve() / data["gazetteer"])
+    change(data)
+    path = tmp_path / "protocol.yaml"
+    path.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+    return str(path)
+
+
+def _bilingual_protocol(tmp_path: Path) -> str:
+    """The sample protocol with Portuguese declared; E2 itself is English-only (ADR-050)."""
+    return _protocol_copy(tmp_path, lambda d: d.update(languages=["en", "pt"]))
 
 
 class TestDotenv:
@@ -67,14 +83,14 @@ not a line
 
 
 class TestOverrides:
-    def test_window_and_terms(self) -> None:
+    def test_window_and_terms(self, tmp_path: Path) -> None:
         env = {
             "MSRKIT_WINDOW_SINCE": "2024-01-01",
             "MSRKIT_WINDOW_UNTIL": "2024-06-30",
             "MSRKIT_TERMS": "RAG evaluation; agent testing ;RAG evaluation",
             "MSRKIT_TERMS_PT": "teste de RAG",
         }
-        cfg = load_protocol(PROTO, env)
+        cfg = load_protocol(_bilingual_protocol(tmp_path), env)
         assert (cfg.window.since, cfg.window.until) == ("2024-01-01", "2024-06-30")
         assert cfg.terms == ["RAG evaluation", "agent testing"]
         assert cfg.terms_by_language["pt"] == ["teste de RAG"]
@@ -173,7 +189,6 @@ class TestRunRecordsEffectiveProtocol:
     def test_manifest_and_per_query_limit(self, tmp_path: Path, monkeypatch) -> None:
         monkeypatch.setattr("msrkit.cli.DATA_DIR", tmp_path)
         monkeypatch.setenv("MSRKIT_TERMS", "RAG evaluation;agent testing;LLM evaluation")
-        monkeypatch.setenv("MSRKIT_TERMS_PT", "teste de RAG")
         monkeypatch.setenv("MSRKIT_SOURCES_PUBLIC", "hackernews")
         self._mock_hn(monkeypatch)
         result = runner.invoke(app, ["run", PROTO, "--per-query-limit", "2"])
@@ -187,6 +202,23 @@ class TestRunRecordsEffectiveProtocol:
         queries = next(s for s in manifest["sources"] if s["name"] == "hackernews")["queries"]
         assert queries and all(q["items"] <= 2 for q in queries)
         assert all("item_limit" in q["truncation_reasons"] for q in queries)
+        assert manifest["effective_protocol"]["census_sources"] == ["devto"]
+
+    def test_census_source_ignores_the_per_query_limit(self, tmp_path: Path, monkeypatch) -> None:
+        proto = _protocol_copy(tmp_path, lambda d: d["sources"]["hackernews"].update(census=True))
+        monkeypatch.setattr("msrkit.cli.DATA_DIR", tmp_path)
+        monkeypatch.setenv("MSRKIT_TERMS", "RAG evaluation;agent testing")
+        monkeypatch.setenv("MSRKIT_SOURCES_PUBLIC", "hackernews")
+        self._mock_hn(monkeypatch)
+        result = runner.invoke(app, ["run", proto, "--per-query-limit", "2"])
+        assert result.exit_code == 0, result.stdout
+        assert "Census: --per-query-limit does not apply" in result.stdout
+        (run_dir,) = (tmp_path / "runs").iterdir()
+        manifest = json.loads((run_dir / "manifest.json").read_text())
+        assert "hackernews" in manifest["effective_protocol"]["census_sources"]
+        queries = next(s for s in manifest["sources"] if s["name"] == "hackernews")["queries"]
+        assert len(queries) == 2
+        assert all(q["items"] == 5 and not q["truncation_reasons"] for q in queries)
 
 
 class TestPilotFixes:
@@ -229,11 +261,10 @@ class TestPilotFixes:
         monkeypatch.setattr(DevToAdapter, "search", fake("devto"))
         monkeypatch.setattr("msrkit.cli.DATA_DIR", tmp_path)
         monkeypatch.setenv("MSRKIT_TERMS", "RAG evaluation;agent testing")
-        monkeypatch.setenv("MSRKIT_TERMS_PT", "teste de RAG")
         monkeypatch.setenv("MSRKIT_SOURCES_PUBLIC", "huggingface,devto")
         result = runner.invoke(app, ["run", PROTO, "--per-query-limit", "5"])
         assert result.exit_code == 0, result.stdout
         hf_terms = seen["huggingface"]
         assert all(len(t) == 1 for t in hf_terms)  # one query per term (and kind)
-        assert {t[0] for t in hf_terms} == {"RAG evaluation", "agent testing", "teste de RAG"}
-        assert seen["devto"] and all(len(t) == 3 for t in seen["devto"])  # tag fetch kept whole
+        assert {t[0] for t in hf_terms} == {"RAG evaluation", "agent testing"}
+        assert seen["devto"] and all(len(t) == 2 for t in seen["devto"])  # tag fetch kept whole

@@ -21,6 +21,7 @@ from __future__ import annotations
 import base64
 import logging
 import re
+import time
 from datetime import UTC, date, datetime
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
@@ -54,9 +55,9 @@ TEST_FILE_RE = re.compile(
 MANIFEST_RE = re.compile(
     r"^(pyproject\.toml|setup\.cfg|setup\.py|package\.json|requirements[^/]*\.txt|Cargo\.toml|go\.mod)$"
 )
-MAX_WORKFLOWS = 10
+MAX_WORKFLOWS = 40
 MAX_MANIFESTS = 6
-MAX_COMMIT_PAGES = 3
+MAX_COMMIT_PAGES = 10
 MAX_FILE_BYTES = 200_000
 # Enrichment calls the core REST API (5,000 requests/hour with a token), not the
 # search API the adapter's policy is tuned for (30/minute). With the search rate,
@@ -88,6 +89,10 @@ class RepoSignals(BaseModel):
     manifests: dict[str, str] = {}  # root dependency files: path -> content
     contributors: int | None = None
     commit_months: list[str] = []  # YYYY-MM with commits inside the window
+    is_fork: bool | None = None
+    fork_parent: str | None = None
+    is_archived: bool | None = None
+    reused_from: str | None = None
     requests: int = 0
     response_sha256: list[str] = []
     fetched_at: str = ""
@@ -108,12 +113,31 @@ def repo_of(item: Item) -> str | None:
     parts = [p for p in urlparse(str(item.url)).path.split("/") if p]
     if len(parts) < 2:
         return None
-    return f"{parts[0]}/{parts[1]}".lower()
+    owner = parts[0]
+    repo = parts[1].removesuffix(".git")
+    return f"{owner}/{repo}".lower()
 
 
 def _is_test_path(path: str) -> bool:
     pure = PurePosixPath(path)
     return any(part in TEST_DIRS for part in pure.parts[:-1]) or bool(TEST_FILE_RE.match(pure.name))
+
+
+_GQL_QUERY = """
+query RepoEnrich($owner: String!, $name: String!) {
+  repository(owner: $owner, name: $name) {
+    isFork
+    isArchived
+    parent {
+      nameWithOwner
+    }
+    mentionableUsers {
+      totalCount
+    }
+    %s
+  }
+}
+"""
 
 
 class GitHubEnricher:
@@ -126,12 +150,30 @@ class GitHubEnricher:
         since: date | None = None,
         until: date | None = None,
         use_graphql: bool = False,
+        items: list[Item] | None = None,
+        known_workflows: dict[str, set[str]] | list[str] | set[str] | None = None,
     ) -> None:
         self._adapter = adapter
         self._config_files = {c.lower() for c in (config_files or set())}
         self._since = since
         self._until = until
         self._use_graphql = use_graphql
+        self._last_mentionable_users: int | None = None
+        self._known_workflows: dict[str, set[str]] = {}
+        if items:
+            for it in items:
+                r = repo_of(it)
+                if r:
+                    p = getattr(it.tech, "path", None) or ""
+                    if p.startswith(".github/workflows/") and p.endswith((".yml", ".yaml")):
+                        self._known_workflows.setdefault(r, set()).add(p)
+        if isinstance(known_workflows, dict):
+            for r, wfs in known_workflows.items():
+                self._known_workflows.setdefault(r.lower(), set()).update(wfs)
+        elif isinstance(known_workflows, (list, set)):
+            self._global_known_workflows = set(known_workflows)
+        else:
+            self._global_known_workflows = set()
 
     def _get(self, sig: RepoSignals, url: str, params: dict[str, Any] | None = None) -> Any:
         resp = self._adapter._governed_get(url, params=params)
@@ -148,13 +190,45 @@ class GitHubEnricher:
         sig.response_sha256.append(self._adapter.last_response_sha256)
         return resp
 
-    def enrich(self, repo: str, default_branch: str | None = None) -> RepoSignals:
+    def enrich(
+        self,
+        repo: str,
+        default_branch: str | None = None,
+        items: list[Item] | None = None,
+        known_workflows: list[str] | set[str] | None = None,
+    ) -> RepoSignals:
         sig = RepoSignals(repo=repo, fetched_at=datetime.now(UTC).isoformat())
         try:
-            self._collect(sig, default_branch)
+            self._collect(sig, default_branch, items=items, known_workflows=known_workflows)
         except Exception as e:  # recorded, never fatal for the batch
             sig.error = f"{type(e).__name__}: {e}"
         return sig
+
+    def enrich_repo(
+        self,
+        repo: str,
+        default_branch: str | None = None,
+        items: list[Item] | None = None,
+        known_workflows: list[str] | set[str] | None = None,
+    ) -> RepoSignals:
+        """Enrich a single repository, prioritizing workflows found in items."""
+        return self.enrich(
+            repo, default_branch=default_branch, items=items, known_workflows=known_workflows
+        )
+
+    def run(
+        self,
+        items: list[Item],
+        limit: int | None = None,
+    ) -> dict[str, RepoSignals]:
+        """Enrich repositories found in items, prioritizing known item workflows."""
+        signals: dict[str, RepoSignals] = {}
+        repos = enrich_priority(items)
+        if limit is not None:
+            repos = repos[:limit]
+        for repo in repos:
+            signals[repo] = self.enrich(repo, items=items)
+        return signals
 
     def _collect_graphql(
         self,
@@ -180,17 +254,7 @@ class GitHubEnricher:
             )
 
         blobs_subquery = "\n    ".join(blob_fields) if blob_fields else ""
-
-        if not blob_fields:
-            return True
-
-        query = f"""
-query RepoEnrich($owner: String!, $name: String!) {{
-  repository(owner: $owner, name: $name) {{
-    {blobs_subquery}
-  }}
-}}
-"""
+        query = _GQL_QUERY % blobs_subquery
         variables: dict[str, Any] = {"owner": owner, "name": name}
 
         resp = self._post_graphql(sig, query, variables)
@@ -207,6 +271,17 @@ query RepoEnrich($owner: String!, $name: String!) {{
         repo_data = data.get("repository")
         if not isinstance(repo_data, dict):
             return False
+
+        if "isFork" in repo_data:
+            sig.is_fork = repo_data.get("isFork")
+        if "isArchived" in repo_data:
+            sig.is_archived = repo_data.get("isArchived")
+        parent = repo_data.get("parent")
+        if isinstance(parent, dict):
+            sig.fork_parent = parent.get("nameWithOwner")
+        mentionable = repo_data.get("mentionableUsers")
+        if isinstance(mentionable, dict) and "totalCount" in mentionable:
+            self._last_mentionable_users = mentionable.get("totalCount")
 
         # 3. Workflows
         for alias, path in wf_aliases.items():
@@ -226,15 +301,30 @@ query RepoEnrich($owner: String!, $name: String!) {{
 
         return True
 
-    def _collect(self, sig: RepoSignals, default_branch: str | None) -> None:
+    _collect_via_graphql = _collect_graphql
+
+    def _collect(
+        self,
+        sig: RepoSignals,
+        default_branch: str | None,
+        items: list[Item] | None = None,
+        known_workflows: list[str] | set[str] | None = None,
+    ) -> None:
         repo = sig.repo
+        self._last_mentionable_users = None
+        resp = self._get(sig, f"{_API}/repos/{repo}")
+        if resp.status_code != 200:
+            sig.error = f"repo metadata HTTP {resp.status_code}"
+            return
+        repo_info = resp.json() if isinstance(resp.json(), dict) else {}
         if not default_branch:
-            resp = self._get(sig, f"{_API}/repos/{repo}")
-            if resp.status_code != 200:
-                sig.error = f"repo metadata HTTP {resp.status_code}"
-                return
-            default_branch = resp.json().get("default_branch")
+            default_branch = repo_info.get("default_branch")
         sig.default_branch = default_branch
+        sig.is_fork = repo_info.get("fork")
+        sig.is_archived = repo_info.get("archived")
+        parent = repo_info.get("parent")
+        if isinstance(parent, dict):
+            sig.fork_parent = parent.get("full_name") or parent.get("nameWithOwner")
         if not default_branch:
             sig.error = "empty repository (no default branch)"
             return
@@ -260,6 +350,32 @@ query RepoEnrich($owner: String!, $name: String!) {{
         sig.config_paths = [p for p in paths if PurePosixPath(p).name.lower() in self._config_files]
         manifest_paths = [p for p in paths if "/" not in p and MANIFEST_RE.match(p)]
 
+        target_known = set(self._known_workflows.get(repo, set()))
+        if hasattr(self, "_global_known_workflows"):
+            target_known.update(self._global_known_workflows)
+        if known_workflows:
+            target_known.update(known_workflows)
+        if items:
+            for it in items:
+                if repo_of(it) == repo:
+                    p = getattr(it.tech, "path", None) or ""
+                    if p.startswith(".github/workflows/") and p.endswith((".yml", ".yaml")):
+                        target_known.add(p)
+
+        if target_known:
+            prioritized = [p for p in workflow_paths if p in target_known]
+            for kw in sorted(target_known):
+                if (
+                    kw not in prioritized
+                    and kw.startswith(".github/workflows/")
+                    and kw.endswith((".yml", ".yaml"))
+                ):
+                    prioritized.append(kw)
+            for p in workflow_paths:
+                if p not in prioritized:
+                    prioritized.append(p)
+            workflow_paths = prioritized
+
         graphql_ok = False
         if self._use_graphql:
             try:
@@ -281,6 +397,12 @@ query RepoEnrich($owner: String!, $name: String!) {{
                     sig.manifests[path] = content
 
         sig.contributors = self._contributors(sig)
+        if (
+            sig.contributors is None
+            and self._use_graphql
+            and self._last_mentionable_users is not None
+        ):
+            sig.contributors = self._last_mentionable_users
         sig.commit_months = self._commit_months(sig)
 
     def _file(self, sig: RepoSignals, path: str, ref: str | None) -> str | None:
@@ -300,6 +422,11 @@ query RepoEnrich($owner: String!, $name: String!) {{
         resp = self._get(
             sig, f"{_API}/repos/{sig.repo}/contributors", {"per_page": 1, "anon": "true"}
         )
+        if resp.status_code == 202:
+            time.sleep(1)
+            resp = self._get(
+                sig, f"{_API}/repos/{sig.repo}/contributors", {"per_page": 1, "anon": "true"}
+            )
         if resp.status_code == 204:
             return 0
         if resp.status_code != 200:
@@ -373,3 +500,16 @@ def apply_signals(items: list[Item], signals: dict[str, RepoSignals]) -> int:
         item.tech.active_months = len(sig.commit_months)
         updated += 1
     return updated
+
+
+def enrich_repo(
+    enricher: GitHubEnricher,
+    repo: str,
+    default_branch: str | None = None,
+    items: list[Item] | None = None,
+    known_workflows: list[str] | set[str] | None = None,
+) -> RepoSignals:
+    """Enrich a repository prioritizing workflows collected in items."""
+    return enricher.enrich(
+        repo, default_branch=default_branch, items=items, known_workflows=known_workflows
+    )

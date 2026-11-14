@@ -190,6 +190,29 @@ class TestDeduplicate:
         assert len(unique) == 2
         assert len(dupes) == 0
 
+    def test_same_item_id_with_variant_url_is_deduplicated(self) -> None:
+        """Same item.id with variant URLs is deduplicated with reason 'id'."""
+        from msrkit.dedupe import deduplicate_report
+
+        item1 = _make_item(
+            "123", "https://example.com/canonical/path", title="Title 1", body="Body 1"
+        )
+        item2 = _make_item(
+            "123", "https://example.org/other/variant", title="Title 2", body="Body 2"
+        )
+        assert item1.id == item2.id
+
+        unique, dupes = deduplicate([item1, item2])
+        assert len(unique) == 1
+        assert len(dupes) == 1
+        assert dupes[0] is item2
+
+        report = deduplicate_report([item1, item2], near_threshold=None)
+        assert len(report.unique) == 1
+        assert len(report.duplicates) == 1
+        assert report.reasons[item2.id] == "id"
+        assert report.counts().get("id") == 1
+
 
 # ---------------------------------------------------------------------------
 # Helpers

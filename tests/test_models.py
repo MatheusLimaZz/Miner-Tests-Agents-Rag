@@ -261,13 +261,13 @@ class TestLanguageLexicons:
         assert match_terms(["LLM como juiz"], title="Usando LLMs como juízes")
         assert not match_terms(["teste de RAG"], title="Receita de bolo")
 
-    def test_sample_protocol_has_portuguese_lexicon(self) -> None:
+    def test_sample_protocol_searches_english_only(self) -> None:
         from msrkit.config import load_protocol
 
-        cfg = load_protocol("protocols/v0_rag_agents_testing.yaml")
-        assert "pt" in cfg.languages
-        assert cfg.terms_by_language["pt"]
-        assert "pt.stackoverflow" in cfg.sources["stackexchange"].extra["sites"]
+        cfg = load_protocol("protocols/v0_rag_agents_testing.yaml")  # ADR-050
+        assert cfg.languages == ["en"]
+        assert not cfg.terms_by_language
+        assert "pt.stackoverflow" not in cfg.sources["stackexchange"].extra["sites"]
 
 
 class TestConcepts:

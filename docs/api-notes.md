@@ -58,3 +58,9 @@ No divergences found during initial implementation. All endpoints, parameters, a
 - **Docs say:** (1) GitHub REST `/search/issues` does not follow repository HTTP 301 redirects on `repo:owner/name` qualifiers and instead returns `422 Unprocessable Entity` when a repository has been renamed or transferred. (2) GitHub REST `/search/repositories` legacy parser returns `total_count: 0` when quoted strings appear immediately inside an opening parenthesis (`("RAG" OR ...)`).
 - **Decision:** Update `protocols/gazetteer.yaml` and `protocols/gold_set.yaml` to canonical post-redirect repository names (`vibrantlabsai/ragas`, `Giskard-AI/giskard-oss`, `NVIDIA-NeMo/Guardrails`) and simplify literal `kind: repo` queries in `protocols/v0_rag_agents_testing.yaml` to unquoted parenthesized syntax (`RAG (eval OR test OR testing)` and `agentic (eval OR test OR testing)`), which returns 27,338 and 170,656 repositories respectively.
 - **Link:** https://docs.github.com/en/rest/search/search
+
+### Berkeley Function Calling Leaderboard (BFCL) — 2026-11-14
+- **Spec says:** Tool identifier `bfcl` representing Berkeley Function Calling Leaderboard from Gorilla (`ShishirPatil/gorilla`), previously configured without explicit package, import, or CLI signals.
+- **Docs say:** Upstream Gorilla BFCL publishes under PyPI package `bfcl-eval` (an unrelated package occupies `bfcl`), the top-level Python import is `bfcl_eval`, and official CLI invocations are multi-word commands `bfcl generate` and `bfcl evaluate`.
+- **Decision:** Configure `packages: [bfcl-eval]`, `python_imports: [bfcl_eval]`, and `cli: [bfcl generate, bfcl evaluate]` in `protocols/gazetteer.yaml`. Multi-word CLI entries ensure structural matching does not trigger false positives on script paths containing `bfcl` (e.g. `scripts/bfcl/run_ab.py`).
+- **Link:** https://github.com/ShishirPatil/gorilla/tree/main/berkeley-function-call-leaderboard

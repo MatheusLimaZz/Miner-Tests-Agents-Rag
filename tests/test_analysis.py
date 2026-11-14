@@ -20,6 +20,7 @@ from msrkit.analysis import (
     coverage,
     coverage_matrix,
     frequency,
+    is_anchored_query,
     oracle_distribution,
     saturation,
     units_from_codings,
@@ -448,3 +449,111 @@ def test_cli_frequency_channel_option(tmp_path: Path, monkeypatch) -> None:
     assert r.exit_code == 0, r.stdout
     assert "OPEN" in r.stdout
     assert "Open" in r.stdout
+
+
+def test_is_anchored_query_with_tool_repos() -> None:
+    from msrkit.gazetteer import ToolEntry
+
+    tool = ToolEntry(
+        id="ragas",
+        name="Ragas",
+        family="eval",
+        repos=["vibrantlabsai/ragas"],
+    )
+
+    q_other = "repo:other-org/ragas-demo is:issue"
+    assert not is_anchored_query(q_other, "ragas", tool_entry=tool)
+
+    q_tool = "repo:vibrantlabsai/ragas is:issue"
+    assert is_anchored_query(q_tool, "ragas", tool_entry=tool)
+
+
+def test_units_from_detections_exclude_self() -> None:
+    from msrkit.gazetteer import Gazetteer
+
+    gaz = Gazetteer.model_validate(
+        {
+            "version": "1",
+            "tools": [
+                {
+                    "id": "ragas",
+                    "name": "Ragas",
+                    "family": "eval",
+                    "repos": ["vibrantlabsai/ragas"],
+                },
+                {
+                    "id": "deepeval",
+                    "name": "DeepEval",
+                    "family": "eval",
+                    "repos": ["confident-ai/deepeval"],
+                },
+            ],
+        }
+    )
+
+    item_self = _item("r1", "https://github.com/vibrantlabsai/ragas")
+    det_self = _det("r1", "ragas", "N3", repo="vibrantlabsai/ragas")
+    det_other = _det("r1", "deepeval", "N2", repo="vibrantlabsai/ragas")
+    det_method = _det("r1", "llm-judge", kind="method", repo="vibrantlabsai/ragas")
+
+    # exclude_self=False (default) preserves self-repo detections
+    units_default = units_from_detections(
+        [item_self], [det_self, det_other, det_method], gazetteer=gaz
+    )
+    assert len(units_default) == 1
+    assert units_default[0].tools == {"ragas": "N3", "deepeval": "N2"}
+    assert units_default[0].methods == ["llm-judge"]
+
+    # exclude_self=True drops self-repo detections while keeping third-party tools
+    units_excluded = units_from_detections(
+        [item_self], [det_self, det_other, det_method], gazetteer=gaz, exclude_self=True
+    )
+    assert len(units_excluded) == 1
+    assert units_excluded[0].tools == {"deepeval": "N2"}
+    assert "ragas" not in units_excluded[0].tools
+    assert "ragas" not in units_excluded[0].tool_channels
+    assert "deepeval" in units_excluded[0].tool_channels
+    assert units_excluded[0].methods == ["llm-judge"]
+
+
+def test_units_from_codings_exclude_self() -> None:
+    from msrkit.gazetteer import Gazetteer
+
+    gaz = Gazetteer.model_validate(
+        {
+            "version": "1",
+            "tools": [
+                {
+                    "id": "ragas",
+                    "name": "Ragas",
+                    "family": "eval",
+                    "repos": ["vibrantlabsai/ragas"],
+                },
+                {
+                    "id": "deepeval",
+                    "name": "DeepEval",
+                    "family": "eval",
+                    "repos": ["confident-ai/deepeval"],
+                },
+            ],
+        }
+    )
+
+    item_self = _item("r1", "https://github.com/vibrantlabsai/ragas")
+    codings = {
+        ("r1", "ana"): _rec(
+            "r1",
+            "ana",
+            sistema=["rag"],
+            ferramentas=["ragas", "deepeval"],
+            nivel_evidencia="N2",
+            metodos=["llm-judge"],
+        )
+    }
+
+    units_default = units_from_codings([item_self], codings, gazetteer=gaz)
+    assert units_default[0].tools == {"ragas": "N2", "deepeval": "N2"}
+
+    units_excluded = units_from_codings([item_self], codings, gazetteer=gaz, exclude_self=True)
+    assert units_excluded[0].tools == {"deepeval": "N2"}
+    assert "ragas" not in units_excluded[0].tools

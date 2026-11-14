@@ -564,7 +564,12 @@ def coding_export(
         done = {item_id for (item_id, c) in load_codings(_cli.DATA_DIR, run_id) if c == coder}
         items = [it for it in items if it.id not in done]
     systems = tuple(c for c in ("rag", "agente") if c in proto.concepts)
-    auto = suggestions(items, _load_detections(run_id), systems)
+    auto = suggestions(
+        items,
+        _load_detections(run_id),
+        systems,
+        gazetteer=proto.gazetteer_data if proto else None,
+    )
     out = Path(
         _unwrap(output) or _cli.DATA_DIR / "coding" / run_id / f"form_{coder or 'blank'}.csv"
     )
@@ -999,7 +1004,12 @@ def coding_tui(
         tuple(proto.concepts.keys()) if proto and proto.concepts else ("rag", "agente")
     )
     detections = _load_detections(run_id)
-    sug_map = suggestions(items, detections, system_concepts)
+    sug_map = suggestions(
+        items,
+        detections,
+        system_concepts,
+        gazetteer=proto.gazetteer_data if proto else None,
+    )
 
     session_items = pending if limit is None or limit <= 0 else pending[:limit]
     console.print(

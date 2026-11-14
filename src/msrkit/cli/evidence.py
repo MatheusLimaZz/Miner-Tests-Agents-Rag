@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
+import json
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING, Any, cast
+
 import typer
 from rich.table import Table
 
@@ -16,6 +21,106 @@ from msrkit.cli._common import (
     console,
 )
 
+if TYPE_CHECKING:
+    from msrkit.enrich import RepoSignals
+
+# Window and gazetteer config files a run was enriched with (ADR-054).
+ENRICH_META = "meta.json"
+
+
+def _enrich_key(since: Any, until: Any, config_files: set[str]) -> dict[str, Any]:
+    return {
+        "since": str(since) if since else None,
+        "until": str(until) if until else None,
+        "config_files": sorted(config_files),
+    }
+
+
+def _run_enrich_key(run_id: str) -> dict[str, Any] | None:
+    """What another run was enriched with, or None when it cannot be told."""
+    meta = _cli.DATA_DIR / "enrich" / run_id / ENRICH_META
+    if meta.exists():
+        data: dict[str, Any] = json.loads(meta.read_text(encoding="utf-8"))
+        return data
+    # Enriched before meta.json existed: the window from the manifest, and the config
+    # files from the gazetteer of the protocol the manifest names.
+    from msrkit.provenance import load_manifest
+
+    try:
+        window = load_manifest(_cli.DATA_DIR, run_id).effective_protocol.get("window") or {}
+    except FileNotFoundError:
+        return None
+    proto = _load_run_protocol(run_id, None)
+    if proto is None or not window:
+        return None
+    gazetteer = proto.gazetteer_data
+    files = {c for t in gazetteer.tools for c in t.config_files} if gazetteer else set()
+    return _enrich_key(window.get("since"), window.get("until"), files)
+
+
+def _reusable_signals(
+    run_id: str, key: dict[str, Any], wanted: set[str], max_age_days: int
+) -> tuple[dict[str, RepoSignals], list[str]]:
+    """Error-free signals of `wanted` repos, at most N days old, from runs with the same key.
+
+    The newest copy of each repository wins; `reused_from` names the run that fetched it.
+    """
+    from msrkit.enrich import RepoSignals
+
+    if "reused_from" not in RepoSignals.model_fields:
+        from pydantic.fields import FieldInfo
+
+        RepoSignals.model_fields["reused_from"] = FieldInfo(
+            annotation=cast("Any", str | None), default=None
+        )
+        RepoSignals.model_rebuild(force=True)
+
+    cutoff = datetime.now(UTC) - timedelta(days=max_age_days)
+    enrich_dir = _cli.DATA_DIR / "enrich"
+    pool: dict[str, RepoSignals] = {}
+    newest: dict[str, datetime] = {}
+    runs: list[str] = []
+    unstripped_wf: dict[tuple[str, str], str] = {}
+    unstripped_mf: dict[tuple[str, str], str] = {}
+    for run_dir in sorted(enrich_dir.iterdir()) if enrich_dir.is_dir() else []:
+        path = run_dir / "github_repos.jsonl"
+        if run_dir.name in (run_id, "consolidated") or not path.exists():
+            continue
+        if _run_enrich_key(run_dir.name) != key:
+            continue
+        runs.append(run_dir.name)
+        with open(path, encoding="utf-8-sig") as f:
+            for line in f:
+                data = json.loads(line) if line.strip() else {}
+                repo = data.get("repo")
+                if repo not in wanted or data.get("error") or not data.get("fetched_at"):
+                    continue
+                wf_data = data.get("workflows")
+                if isinstance(wf_data, dict):
+                    for k_path, content in wf_data.items():
+                        if content:
+                            unstripped_wf[(repo, k_path)] = content
+                mf_data = data.get("manifests")
+                if isinstance(mf_data, dict):
+                    for k_path, content in mf_data.items():
+                        if content:
+                            unstripped_mf[(repo, k_path)] = content
+                fetched = datetime.fromisoformat(data["fetched_at"])
+                fetched = fetched if fetched.tzinfo else fetched.replace(tzinfo=UTC)
+                if fetched <= newest.get(repo, cutoff):
+                    continue
+                sig = RepoSignals.model_validate(data)
+                sig.reused_from = sig.reused_from or run_dir.name
+                pool[repo], newest[repo] = sig, fetched
+    for repo, sig in pool.items():
+        for k_path, content in list(sig.workflows.items()):
+            if not content and (repo, k_path) in unstripped_wf:
+                sig.workflows[k_path] = unstripped_wf[(repo, k_path)]
+        for k_path, content in list(sig.manifests.items()):
+            if not content and (repo, k_path) in unstripped_mf:
+                sig.manifests[k_path] = unstripped_mf[(repo, k_path)]
+    return pool, runs
+
 
 @app.command()
 def enrich(
@@ -29,6 +134,12 @@ def enrich(
         "--graphql",
         help="Use GitHub GraphQL API v4 for batched retrieval (faster, fewer requests)",
     ),
+    reuse_days: int = typer.Option(
+        0,
+        "--reuse-days",
+        help="Copy the signals of repositories another run enriched in the last N days, "
+        "with the same window and gazetteer config files (0 = off)",
+    ),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
     """Read tree, CI workflows, manifests, contributors and commit months of GitHub repos.
@@ -40,6 +151,7 @@ def enrich(
     limit = _unwrap(limit)
     protocol = _unwrap(protocol)
     graphql = _unwrap(graphql)
+    reuse_days = _unwrap(reuse_days)
     verbose = _unwrap(verbose)
     _setup_logging(verbose)
 
@@ -55,6 +167,14 @@ def enrich(
     )
     from msrkit.governor import Governor
     from msrkit.storage import ItemStorage
+
+    if "reused_from" not in RepoSignals.model_fields:
+        from pydantic.fields import FieldInfo
+
+        RepoSignals.model_fields["reused_from"] = FieldInfo(
+            annotation=cast("Any", str | None), default=None
+        )
+        RepoSignals.model_rebuild(force=True)
 
     if not run_id:
         run_id = _get_latest_run_id()
@@ -79,14 +199,27 @@ def enrich(
     out_path = _cli.DATA_DIR / "enrich" / run_id / "github_repos.jsonl"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     signals: dict[str, RepoSignals] = _load_repo_signals(run_id)
+    key = _enrich_key(since, until, config_files)
+    (out_path.parent / ENRICH_META).write_text(json.dumps(key), encoding="utf-8")
 
     todo = [r for r in branches if r not in signals]
+    reused: dict[str, RepoSignals] = {}
+    if reuse_days:
+        reused, reuse_runs = _reusable_signals(run_id, key, set(todo), reuse_days)
+        todo = [r for r in todo if r not in reused]
     if limit is not None:
         todo = todo[:limit]
+    reused_note = f"{len(reused)} reused, " if reuse_days else ""
     console.print(
         f"[bold]Run:[/bold] {run_id} · {len(branches)} repositories, "
-        f"{len(signals)} already enriched, {len(todo)} to go"
+        f"{len(signals)} already enriched, {reused_note}{len(todo)} to go"
     )
+    if reuse_days:
+        origins = ", ".join(sorted({s.reused_from or "" for s in reused.values()})) or "none"
+        console.print(
+            f"  Reused from: {origins} (fetched in the last {reuse_days} days, same window "
+            f"and config files; {len(reuse_runs)} earlier run(s) eligible)"
+        )
 
     adapter = GitHubAdapter(
         governor=Governor(
@@ -103,6 +236,29 @@ def enrich(
     errors = 0
     try:
         with open(out_path, "a", encoding="utf-8") as fh:
+            for repo, sig in reused.items():
+                missing_wf = [p for p, c in sig.workflows.items() if not c]
+                missing_mf = [p for p, c in sig.manifests.items() if not c]
+                if missing_wf or missing_mf:
+                    branch = sig.default_branch or "HEAD"
+                    hydrated = False
+                    if graphql:
+                        with contextlib.suppress(Exception):
+                            hydrated = enricher._collect_graphql(
+                                sig, branch, missing_wf, missing_mf
+                            )
+                    if not hydrated:
+                        for p in missing_wf:
+                            content = enricher._file(sig, p, branch)
+                            if content is not None:
+                                sig.workflows[p] = content
+                        for p in missing_mf:
+                            content = enricher._file(sig, p, branch)
+                            if content is not None:
+                                sig.manifests[p] = content
+                signals[repo] = sig
+                fh.write(sig.model_dump_json() + "\n")
+                fh.flush()
             for repo in todo:
                 sig = enricher.enrich(repo)
                 signals[repo] = sig

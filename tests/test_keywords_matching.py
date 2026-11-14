@@ -273,3 +273,66 @@ class TestFlexibleMatching:
         hits = match_terms(["rag"], tags=["rag", None, 123])  # type: ignore[list-item]
         assert len(hits) == 1
         assert hits[0].field == "tags"
+
+    def test_derivational_er_agent_nouns_do_not_over_stem(self) -> None:
+        terms = ["retriever"]
+        assert match_terms(terms, title="BM25 dense retriever")
+        assert match_terms(terms, title="Hybrid retrievers for RAG")
+        assert not match_terms(
+            terms,
+            title="demonstrate record retrieval and declared missing evidence",
+        )
+        assert not match_terms(terms, title="retrieve user credentials")
+
+
+class TestRegressionMorphologicalMatching:
+    """Regression tests for bounded morphological inflections (C3 bugfixes)."""
+
+    def test_execution_trace_boundaries(self) -> None:
+        """'execution trace' matches 'traces'/'tracing' but NOT 'tracking' or 'track'."""
+        terms = ["execution trace"]
+        assert match_terms(terms, title="Collecting execution traces for debugging")
+        assert match_terms(terms, title="Low overhead execution tracing")
+        assert not match_terms(terms, title="Execution tracking across microservices")
+        assert not match_terms(terms, title="Fast execution track runner")
+
+    def test_state_boundaries(self) -> None:
+        """'state' matches 'states' but NOT unrelated words starting with 'stat'."""
+        terms = ["state"]
+        assert match_terms(terms, title="Handling multiple states in stateful agents")
+        assert not match_terms(terms, title="Current system status check")
+        assert not match_terms(terms, title="Static analysis of code")
+        assert not match_terms(terms, title="Summary statistics report")
+        assert not match_terms(terms, title="Bank statement parser")
+
+    def test_oracle_boundaries(self) -> None:
+        """'oracle' does not match compounds or identifiers prefixed with 'oracle'."""
+        terms = ["oracle"]
+        assert not match_terms(terms, title="Deploying to oraclecloud infrastructure")
+        assert not match_terms(terms, title="Connecting to oracle_host machine")
+        assert not match_terms(terms, title="Rotating oracle_deploy_key secret")
+
+    def test_check_boundaries(self) -> None:
+        """'check' does not match compounds like 'checkpoint', 'checksum', 'checkout'."""
+        terms = ["check"]
+        assert not match_terms(terms, title="Saving model checkpoint to disk")
+        assert not match_terms(terms, title="Verifying artifact checksum with SHA-256")
+        assert not match_terms(terms, title="Cart checkout service latency")
+
+    def test_pt_terms_do_not_match_english_equivalents(self) -> None:
+        """Portuguese terms 'agente' and 'teste' do NOT match English 'agent' or 'test'."""
+        assert not match_terms(["agente"], title="Building an AI agent")
+        assert not match_terms(["agente"], title="Multi-agent systems")
+        assert not match_terms(["teste"], title="Automated unit test execution")
+        assert not match_terms(["teste"], title="Performance testing framework")
+        # Validate PT inflections still match as intended
+        assert match_terms(["agente"], title="Comportamento do agente autônomo")
+        assert match_terms(["agente"], title="Coordenação de agentes inteligentes")
+        assert match_terms(["teste"], title="Ambiente de teste automatizado")
+        assert match_terms(["teste"], title="Execução de testes de regressão")
+
+    def test_chunking_requires_inflection_suffix(self) -> None:
+        """-ing words require inflection suffix and do not match bare root."""
+        terms = ["chunking"]
+        assert match_terms(terms, title="RAG document chunking strategies")
+        assert not match_terms(terms, title="A chunk of what I do")

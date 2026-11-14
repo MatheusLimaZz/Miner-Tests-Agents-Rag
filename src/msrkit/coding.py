@@ -34,6 +34,7 @@ from pydantic import BaseModel, model_validator
 
 from msrkit.enrich import repo_of
 from msrkit.extract import LEVEL_RANK
+from msrkit.models import ItemKind
 from msrkit.screening import DELIMITER, TRUE_MARKS, SheetError
 
 if TYPE_CHECKING:
@@ -143,24 +144,38 @@ class CodingRecordList(list["CodingRecord"]):
 
 
 def suggestions(
-    items: list[Item], detections: list[Detection], system_concepts: tuple[str, ...]
+    items: list[Item],
+    detections: list[Detection],
+    system_concepts: tuple[str, ...],
+    gazetteer: Gazetteer | None = None,
 ) -> dict[str, dict[str, str]]:
     """auto_* columns per item from concepts, detections and repository signals.
 
-    Repository-level detections (dependency, config, CI) are shared by every item
-    of that repository.
+    Repository-level detections (dependency, config, CI) are shared by non-issue
+    items of that repository, excluding self-repo tools when gazetteer is supplied.
     """
+    self_tools_by_repo = gazetteer.self_tools_by_repo() if gazetteer is not None else {}
+
     by_item: dict[str, list[Detection]] = {}
     by_repo: dict[str, list[Detection]] = {}
     for d in detections:
         by_item.setdefault(d.item_id, []).append(d)
         if d.repo and d.signal != "text":
-            by_repo.setdefault(d.repo, []).append(d)
+            by_repo.setdefault(d.repo.lower(), []).append(d)
     out: dict[str, dict[str, str]] = {}
     for it in items:
-        dets = by_item.get(it.id, []) + [
-            d for d in by_repo.get(repo_of(it) or "", []) if d.item_id != it.id
-        ]
+        repo_key = (repo_of(it) or "").lower()
+        self_tools = self_tools_by_repo.get(repo_key, set())
+        item_dets = [d for d in by_item.get(it.id, []) if d.entry_id not in self_tools]
+        if it.kind == ItemKind.ISSUE:
+            dets = [d for d in item_dets if d.signal == "text"]
+        else:
+            repo_dets = [
+                d
+                for d in by_repo.get(repo_key, [])
+                if d.item_id != it.id and d.entry_id not in self_tools
+            ]
+            dets = item_dets + repo_dets
         best = max(dets, key=lambda d: LEVEL_RANK[d.level], default=None)
         eng = it.engagement.model_dump(exclude_none=True)
         tech = it.tech

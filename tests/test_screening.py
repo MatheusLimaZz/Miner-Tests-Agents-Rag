@@ -86,6 +86,8 @@ class TestSheet:
         items = _items(2)
         items[0].concepts = ["rag", "teste"]
         items[0].matched_terms = [TermHit(term="rag", field="title", context="rag")]
+        items[0].tech.has_ci = True
+        items[0].tech.contributors = 10
         ranking = {
             "it0": rank_items(items, None, batch_size=2)["it0"],
             "it1": rank_items(items, None, batch_size=2)["it1"],
@@ -98,8 +100,29 @@ class TestSheet:
         assert rows[0]["concepts"] == ""
         assert rows[0]["matched_terms"] == ""
         assert rows[0]["rank"] == ""
+        assert rows[0]["has_ci"] == ""
+        assert rows[0]["contributors"] == ""
         assert rows[0]["title"] == "Item 0"
         assert rows[0]["coder"] == "ana"
+
+    def test_export_blind_masks_ci_and_contributors(self, tmp_path: Path) -> None:
+        path = tmp_path / "blind_tech.csv"
+        items = _items(1)
+        items[0].tech.has_ci = True
+        items[0].tech.contributors = 42
+        export_sheet(items, CRIT, path, coder="ana", blind=True)
+        with open(path, encoding="utf-8-sig") as fh:
+            rows = list(csv.DictReader(fh, delimiter=";"))
+        assert rows[0]["has_ci"] == ""
+        assert rows[0]["contributors"] == ""
+
+        # Unblinded retains signals
+        unblind_path = tmp_path / "unblind_tech.csv"
+        export_sheet(items, CRIT, unblind_path, coder="ana", blind=False)
+        with open(unblind_path, encoding="utf-8-sig") as fh:
+            unblind_rows = list(csv.DictReader(fh, delimiter=";"))
+        assert unblind_rows[0]["has_ci"] == "true"
+        assert unblind_rows[0]["contributors"] == "42"
 
     def test_import_roundtrip_and_blank_rows_skipped(self, tmp_path: Path) -> None:
         path = tmp_path / "s.csv"

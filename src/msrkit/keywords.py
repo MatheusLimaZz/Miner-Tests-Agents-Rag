@@ -2,8 +2,8 @@
 
 Two deterministic modes (no embeddings or ML classification):
 
-- ``flexible`` (default): each word of a term tolerates inflection (a light
-  suffix-stripping stem followed by ``\\w*``), and words may be separated by
+- ``flexible`` (default): each word of a term tolerates bounded
+  morphological inflections, and words may be separated by
   spaces, hyphens, underscores or slashes. "evaluate RAG" matches "Evaluating
   RAG"; "LLM as a judge" matches "LLM-as-a-judge". Words shorter than four
   characters (acronyms such as RAG, LLM) stay exact, allowing only a plural "s",
@@ -25,26 +25,42 @@ from msrkit.models import TermHit
 MatchMode = Literal["flexible", "exact"]
 
 # Checked in order; the first suffix that leaves a stem of MIN_STEM chars wins.
+# Derivational agent nouns (-er/-ers, e.g. "retriever") are not stripped so
+# "retriever" matches "retriever"/"retrievers" rather than generic "retrieve"/"retrieval".
 _SUFFIXES = (
     # English
-    "ations", "ation", "ings", "ing", "ers", "er", "ed",
+    "ations", "ation", "ings", "ing", "ed",
     # Portuguese, accent-folded (avaliação/avaliações -> avali-, testes -> test-)
     "acoes", "acao", "coes", "cao",
     # shared
-    "es", "s", "e",
+    "es", "s",
 )  # fmt: skip
 MIN_STEM = 4
 _WORD_SEP = re.compile(r"[\s\-_/]+")
 _SEP_PATTERN = r"[\s\-_/]+"
+_PT_E_STEMS: dict[str, str] = {
+    "agente": "agent",
+    "agentes": "agent",
+    "teste": "test",
+    "testes": "test",
+}
+_CONSONANTS = frozenset("bcdfghjklmnpqrstvwxyz")
+
+
+@lru_cache(maxsize=512)
+def _fold_non_ascii(text: str) -> str:
+    return "".join(unicodedata.normalize("NFD", ch)[0] for ch in text)
 
 
 def _fold(text: str) -> str:
     """Strip accents one character at a time, so string positions are preserved."""
-    return "".join(unicodedata.normalize("NFD", ch)[0] for ch in text)
+    if text.isascii():
+        return text
+    return _fold_non_ascii(text)
 
 
 def _stem(word: str) -> str:
-    """Strip one common English inflectional suffix, keeping at least MIN_STEM chars."""
+    """Strip one common inflectional suffix, keeping at least MIN_STEM chars."""
     lower = word.lower()
     for suffix in _SUFFIXES:
         if lower.endswith(suffix) and len(lower) - len(suffix) >= MIN_STEM:
@@ -55,7 +71,36 @@ def _stem(word: str) -> str:
 def _word_pattern(word: str) -> str:
     if len(word) < MIN_STEM:
         return re.escape(word) + r"s?\b"
-    return re.escape(_stem(word)) + r"\w*"
+
+    lower = word.lower()
+    if lower in _PT_E_STEMS:
+        stem = _PT_E_STEMS[lower]
+        return re.escape(stem) + r"(?:e|es)\b"
+
+    matched_suffix = None
+    for suffix in _SUFFIXES:
+        if lower.endswith(suffix) and len(lower) - len(suffix) >= MIN_STEM:
+            matched_suffix = suffix
+            break
+
+    if matched_suffix is not None:
+        stem = lower[: -len(matched_suffix)]
+        if matched_suffix in ("ations", "ation"):
+            return (
+                re.escape(stem)
+                + r"(?:ations?|ating|ated|ate|ates|ators?|ative|ing|ings|ed|es|s)?\b"
+            )
+        if matched_suffix in ("ings", "ing"):
+            return re.escape(stem) + r"(?:ings?|ing|ed|e|es|er|ers|s)\b"
+        if matched_suffix in ("acoes", "acao", "coes", "cao"):
+            return re.escape(stem) + r"(?:ac(?:ao|oes)|c(?:ao|oes))\b"
+        return re.escape(stem) + r"(?:s|es|ed|ing)?\b"
+
+    if lower.endswith("e") and len(lower) >= 2 and lower[-2] in _CONSONANTS:
+        base = lower[:-1]
+        return re.escape(base) + r"(?:e|es|ed|ing)\b"
+
+    return re.escape(lower) + r"(?:s|es|ed|ing)?\b"
 
 
 def _exact_pattern(term: str) -> re.Pattern[str]:
@@ -66,7 +111,7 @@ def _exact_pattern(term: str) -> re.Pattern[str]:
     return re.compile(rf"{left}{escaped}{right}", re.IGNORECASE)
 
 
-@lru_cache(maxsize=1024)
+@lru_cache(maxsize=4096)
 def _build_pattern(term: str, mode: MatchMode = "flexible") -> re.Pattern[str]:
     """Build the regex for a term in the given matching mode."""
     words = [w for w in _WORD_SEP.split(_fold(term.strip())) if w]
@@ -75,7 +120,8 @@ def _build_pattern(term: str, mode: MatchMode = "flexible") -> re.Pattern[str]:
     if not words or any(re.search(r"\W", w) for w in words):
         return _exact_pattern(_fold(term))
     body = _SEP_PATTERN.join(_word_pattern(w) for w in words)
-    return re.compile(rf"\b{body}", re.IGNORECASE)
+    right = r"(?!\w)" if re.search(r"\W$", body) and not body.endswith(r"\b") else ""
+    return re.compile(rf"\b{body}{right}", re.IGNORECASE)
 
 
 def _extract_context(text: str, match_start: int, match_end: int, window: int = 40) -> str:
@@ -146,18 +192,18 @@ def match_terms(
         ("path", path),
     ]
 
+    active_fields: list[tuple[Literal["title", "body", "tags", "path"], str, str]] = []
+    for field_name, field_value in fields:
+        if field_value is not None:
+            searchable = _fold(field_value) if mode == "flexible" else field_value
+            active_fields.append((field_name, field_value, searchable))
+
     for term in terms:
         if not term or not term.strip():
             continue
         pattern = _build_pattern(term, mode)
 
-        for field_name, field_value in fields:
-            if field_value is None:
-                continue
-
-            # Flexible mode matches on accent-folded text; _fold keeps positions,
-            # so the context window is cut from the original text.
-            searchable = _fold(field_value) if mode == "flexible" else field_value
+        for field_name, field_value, searchable in active_fields:
             for match in pattern.finditer(searchable):
                 context = _extract_context(
                     field_value,

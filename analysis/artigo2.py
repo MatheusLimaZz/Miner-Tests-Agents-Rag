@@ -397,9 +397,7 @@ def load_package(path: Path, gazetteer_path: Path | None = None) -> Package:
             except ValidationError:
                 skipped["detections"] += 1
     repos = [
-        json.loads(line)
-        for line in text("evidence/github_repos.jsonl").split("\n")
-        if line.strip()
+        json.loads(line) for line in text("evidence/github_repos.jsonl").split("\n") if line.strip()
     ]
 
     if gazetteer_path is not None:
@@ -1002,7 +1000,7 @@ def non_truncated_queries(manifest: dict[str, Any]) -> set[tuple[str, str]] | No
 def analyse(pkg: Package, out: Path, args: argparse.Namespace) -> dict[str, Any]:
     rng = np.random.default_rng(args.seed)
     cat = catalog(pkg.gazetteer)
-    units = units_from_detections(pkg.items, pkg.detections)
+    units = units_from_detections(pkg.items, pkg.detections, gazetteer=pkg.gazetteer)
     m = Macros()
     for name, value in (
         ("ResMinIdade", fmt_int(args.min_age_months)),

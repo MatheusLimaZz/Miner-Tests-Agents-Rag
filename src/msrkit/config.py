@@ -74,6 +74,16 @@ class SourceConfig(BaseModel):
     # Literal per-source queries, run in addition to (or instead of) the lexicon.
     queries: list[RawQueryConfig] = []
     use_terms: bool = True  # False: run only `queries`
+    # Collected whole inside the window: the run's per-query cap does not apply.
+    census: bool = False
+
+
+class SamplingConfig(BaseModel):
+    """How queries sample their sources (ADR-055)."""
+
+    # "year": each query of a source that filters by date runs once per calendar
+    # year of the window, every stratum with the run's per-query cap.
+    strata: Literal["none", "year"] = "none"
 
 
 class LimitsConfig(BaseModel):
@@ -96,6 +106,7 @@ class ProtocolConfig(BaseModel):
     terms_by_language: dict[str, list[str]] = {}
     languages: list[str] = ["en"]
     sources: dict[str, SourceConfig]
+    sampling: SamplingConfig = SamplingConfig()
     limits: LimitsConfig = LimitsConfig()
     # Concept groups with their own lexicons, e.g. {"rag": [...], "agente": [...],
     # "teste": [...]}; items are labeled with every concept whose lexicon matches.
@@ -140,6 +151,8 @@ class ProtocolConfig(BaseModel):
             "terms_by_language": {k: list(v) for k, v in self.terms_by_language.items()},
             "enabled_sources": self.enabled_sources(),
             "source_groups": self.source_groups,
+            "census_sources": sorted(n for n, s in self.sources.items() if s.census),
+            "strata": self.sampling.strata,
         }
 
     def differs_from_file(self) -> list[str]:
@@ -383,6 +396,10 @@ def load_protocol(path: str | Path, environ: Mapping[str, str] | None = None) ->
 
 
 def protocol_sha256(path: str | Path) -> str:
-    """Compute SHA-256 hash of a protocol file for provenance."""
-    content = Path(path).read_bytes()
+    """Compute SHA-256 hash of a protocol file for provenance.
+
+    Line endings are normalized to LF first: a Windows checkout (CRLF) and the CI
+    runner (LF) must give the same hash for the same protocol.
+    """
+    content = Path(path).read_bytes().replace(b"\r\n", b"\n")
     return hashlib.sha256(content).hexdigest()

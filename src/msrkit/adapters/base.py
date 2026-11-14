@@ -159,6 +159,14 @@ class BaseAdapter(ABC):
         """
         return [q]
 
+    def stratifies_by_date(self, q: Query) -> bool:
+        """Whether the source applies `q`'s since/until, so `q` can be split by year."""
+        return self.policy.supports_date_filter
+
+    def population(self, q: Query) -> int | None:
+        """How many items `q` matches at the source, for sampling weights; None if unknown."""
+        return self.estimate(q)
+
     # -------------------------------------------------------------------
     # Helper methods
     # -------------------------------------------------------------------

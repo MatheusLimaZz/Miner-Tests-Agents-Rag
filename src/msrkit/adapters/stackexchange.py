@@ -103,6 +103,11 @@ class StackExchangeAdapter(BaseAdapter):
             reason="Stack Exchange API key configured. ~10,000 daily quota.",
         )
 
+    @property
+    def api_key(self) -> str | None:
+        """API key from environment (STACKEXCHANGE_KEY)."""
+        return self._env("STACKEXCHANGE_KEY")
+
     def estimate(self, q: Query) -> int | None:
         """Use 'total' field from the response when available."""
         sites = q.extra.get("sites", ["stackoverflow"])
@@ -121,6 +126,22 @@ class StackExchangeAdapter(BaseAdapter):
         self._handle_backoff(data)
         total = data.get("total")
         return int(total) if total is not None else None
+
+    def population(self, q: Query) -> int | None:
+        """'total' summed over every configured site (estimate() reads the first one)."""
+        total = 0
+        for site in q.extra.get("sites", ["stackoverflow"]):
+            params = self._build_params(q, site=site, page=1, pagesize=1)
+            params["filter"] = "total"
+            resp = self._governed_get(f"{_BASE_URL}/search/advanced", params=params)
+            if resp.status_code != 200:
+                return None
+            data = resp.json()
+            self._handle_backoff(data)
+            if data.get("total") is None:
+                return None
+            total += int(data["total"])
+        return total
 
     def partition(self, q: Query) -> list[Query]:
         """Split multi-term queries so each term runs as its own query."""
@@ -145,7 +166,10 @@ class StackExchangeAdapter(BaseAdapter):
                 if total_yielded >= limit:
                     return
                 page = 1
-                max_pages = self.policy.max_pages or 25
+                if self.policy.max_pages is not None and self.policy.max_pages != 25:
+                    max_pages = self.policy.max_pages
+                else:
+                    max_pages = 100 if self.api_key else 25
 
                 while page <= max_pages and total_yielded < limit:
                     page_size = min(self.policy.max_page_size, limit - total_yielded)
@@ -156,10 +180,11 @@ class StackExchangeAdapter(BaseAdapter):
 
                     if resp.status_code != 200:
                         logger.warning(
-                            "SE search returned %d for site=%s page=%d",
+                            "SE search returned %d for site=%s page=%d: %s",
                             resp.status_code,
                             site,
                             page,
+                            resp.text[:200],
                         )
                         break
 
@@ -234,7 +259,12 @@ class StackExchangeAdapter(BaseAdapter):
                     params["key"] = key
                 resp = self._governed_get(f"{_BASE_URL}/questions/{batch}/answers", params=params)
                 if resp.status_code != 200:
-                    logger.warning("SE answers returned %d for site=%s", resp.status_code, site)
+                    logger.warning(
+                        "SE answers returned %d for site=%s: %s",
+                        resp.status_code,
+                        site,
+                        resp.text[:200],
+                    )
                     break
                 data = resp.json()
                 self._handle_backoff(data)

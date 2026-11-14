@@ -49,11 +49,12 @@ FORM = CodingForm(
 )  # fmt: skip
 
 
-def _item(i: int, url: str | None = None) -> Item:
+def _item(i: int, url: str | None = None, kind: ItemKind | None = None) -> Item:
+    default_kind = ItemKind.REPO if url else ItemKind.THREAD
     return Item(
         id=f"it{i}",
         source="github" if url else "hackernews",
-        kind=ItemKind.REPO if url else ItemKind.THREAD,
+        kind=kind or default_kind,
         url=url or f"https://x.example/{i}",  # type: ignore[arg-type]
         title=f"Item {i}",
         concepts=["rag", "teste"],
@@ -106,7 +107,7 @@ class TestForm:
 class TestSuggestions:
     def test_repo_level_detections_shared_by_items_of_the_repo(self) -> None:
         repo = _item(1, "https://github.com/o/r")
-        issue = _item(2, "https://github.com/o/r/issues/3")
+        code = _item(2, "https://github.com/o/r/blob/main/eval.py", kind=ItemKind.CODE)
         dets = [
             Detection(item_id="it1", source="github", repo="o/r", entry_id="ragas",
                       entry_type="tool", level="N3", signal="ci", location="ci.yml",
@@ -115,12 +116,190 @@ class TestSuggestions:
                       entry_type="method", level="N1", signal="text", location="body",
                       evidence="judge"),
         ]  # fmt: skip
-        auto = suggestions([repo, issue], dets, ("rag", "agente"))
+        auto = suggestions([repo, code], dets, ("rag", "agente"))
         assert auto["it2"]["auto_nivel"] == "N3"
         assert auto["it2"]["auto_ferramentas"] == "ragas"
         assert auto["it2"]["auto_metodos"] == "llm-judge"
         assert auto["it1"]["auto_metodos"] == ""  # text mentions are not shared
         assert auto["it1"]["auto_sistema"] == "rag"
+
+    def test_issues_do_not_inherit_repo_level_ci_or_unrelated_tools(self) -> None:
+        repo = _item(1, "https://github.com/guardrails-ai/guardrails")
+        issue = _item(
+            2,
+            "https://github.com/guardrails-ai/guardrails/issues/168",
+            kind=ItemKind.ISSUE,
+        )
+        repo_dets = [
+            Detection(
+                item_id="it1",
+                source="github",
+                repo="guardrails-ai/guardrails",
+                entry_id="langsmith",
+                entry_type="tool",
+                level="N3",
+                signal="ci",
+                location=".github/workflows/ci.yml",
+                evidence="run: langsmith test",
+            )
+        ]
+        auto_isolated = suggestions([repo, issue], repo_dets, ("rag", "agente"))
+        assert auto_isolated["it2"]["auto_nivel"] == ""
+        assert auto_isolated["it2"]["auto_ferramentas"] == ""
+
+        issue_det = Detection(
+            item_id="it2",
+            source="github",
+            repo="guardrails-ai/guardrails",
+            entry_id="deepeval",
+            entry_type="tool",
+            level="N1",
+            signal="text",
+            location="body",
+            evidence="using deepeval",
+        )
+        auto_with_item = suggestions([repo, issue], repo_dets + [issue_det], ("rag", "agente"))
+        assert auto_with_item["it2"]["auto_nivel"] == "N1"
+        assert auto_with_item["it2"]["auto_ferramentas"] == "deepeval"
+        assert "langsmith" not in auto_with_item["it2"]["auto_ferramentas"]
+
+    def test_repo_items_skip_self_repo_tool_detections_when_gazetteer_passed(self) -> None:
+        gaz = Gazetteer(
+            version="1",
+            tools=[
+                ToolEntry(
+                    id="garak",
+                    name="Garak",
+                    family="vulnerability",
+                    repos=["NVIDIA/garak"],
+                ),
+                ToolEntry(id="pytest", name="Pytest", family="test-runner"),
+            ],
+        )
+        repo = _item(1, "https://github.com/NVIDIA/garak", kind=ItemKind.REPO)
+        code = _item(
+            2,
+            "https://github.com/NVIDIA/garak/blob/main/tests/test_run.py",
+            kind=ItemKind.CODE,
+        )
+        dets = [
+            Detection(
+                item_id="it1",
+                source="github",
+                repo="NVIDIA/garak",
+                entry_id="garak",
+                entry_type="tool",
+                level="N3",
+                signal="config",
+                location="garak.yaml",
+                evidence="garak config",
+            ),
+            Detection(
+                item_id="it1",
+                source="github",
+                repo="NVIDIA/garak",
+                entry_id="pytest",
+                entry_type="tool",
+                level="N3",
+                signal="ci",
+                location=".github/workflows/ci.yml",
+                evidence="pytest",
+            ),
+        ]
+        auto = suggestions([repo, code], dets, ("rag", "agente"), gazetteer=gaz)
+        assert auto["it2"]["auto_ferramentas"] == "pytest"
+        assert "garak" not in auto["it2"]["auto_ferramentas"]
+
+        auto_no_gaz = suggestions([repo, code], dets, ("rag", "agente"), gazetteer=None)
+        assert "garak" in auto_no_gaz["it2"]["auto_ferramentas"]
+        assert "pytest" in auto_no_gaz["it2"]["auto_ferramentas"]
+
+    def test_issues_ignore_legacy_structural_detections_and_suppress_self_repo_tools(
+        self,
+    ) -> None:
+        gaz = Gazetteer(
+            version="1",
+            tools=[
+                ToolEntry(
+                    id="guardrails-ai",
+                    name="Guardrails AI",
+                    family="guardrail",
+                    repos=["guardrails-ai/guardrails"],
+                ),
+                ToolEntry(
+                    id="garak",
+                    name="Garak",
+                    family="vulnerability",
+                    repos=["NVIDIA/garak"],
+                ),
+                ToolEntry(id="pytest", name="Pytest", family="test-runner"),
+            ],
+        )
+        issue_guardrails = _item(
+            1,
+            "https://github.com/guardrails-ai/guardrails/issues/100",
+            kind=ItemKind.ISSUE,
+        )
+        dets_guardrails = [
+            Detection(
+                item_id="it1",
+                source="github",
+                repo="guardrails-ai/guardrails",
+                entry_id="guardrails-ai",
+                entry_type="tool",
+                level="N1",
+                signal="text",
+                location="body",
+                evidence="guardrails-ai mention",
+            ),
+            Detection(
+                item_id="it1",
+                source="github",
+                repo="guardrails-ai/guardrails",
+                entry_id="ci",
+                entry_type="tool",
+                level="N3",
+                signal="ci",
+                location=".github/workflows/ci.yml",
+                evidence="ci workflow",
+            ),
+            Detection(
+                item_id="it1",
+                source="github",
+                repo="guardrails-ai/guardrails",
+                entry_id="pytest",
+                entry_type="tool",
+                level="N1",
+                signal="text",
+                location="body",
+                evidence="pytest mention",
+            ),
+        ]
+        auto_g = suggestions([issue_guardrails], dets_guardrails, ("rag", "agente"), gazetteer=gaz)
+        assert auto_g["it1"]["auto_ferramentas"] == "pytest"
+        assert auto_g["it1"]["auto_nivel"] == "N1"
+
+        issue_garak = _item(
+            2,
+            "https://github.com/NVIDIA/garak/issues/50",
+            kind=ItemKind.ISSUE,
+        )
+        dets_garak = [
+            Detection(
+                item_id="it2",
+                source="github",
+                repo="NVIDIA/garak",
+                entry_id="garak",
+                entry_type="tool",
+                level="N1",
+                signal="text",
+                location="body",
+                evidence="garak mention",
+            ),
+        ]
+        auto_garak = suggestions([issue_garak], dets_garak, ("rag", "agente"), gazetteer=gaz)
+        assert auto_garak["it2"]["auto_ferramentas"] == ""
+        assert auto_garak["it2"]["auto_nivel"] == ""
 
 
 class TestSheet:

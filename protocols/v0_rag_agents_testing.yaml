@@ -21,6 +21,15 @@ window:
   since: "2023-01-01"
   until: "2026-08-31"
 
+# ---- Amostragem (§7.4) ----
+# Cada consulta das fontes que filtram por data (GitHub repositórios e issues,
+# Hacker News, Stack Exchange) roda uma vez por ano da janela, cada ano com o
+# teto por consulta da execução, e o manifesto guarda o total disponível de cada
+# estrato para ponderar as análises. Sem estratos, o teto ficava com os itens
+# mais recentes: 65% das issues da d855 eram de 2026 (ADR-055).
+sampling:
+  strata: year
+
 # ---- Léxico de busca (§7.1, léxico controlado duplo) ----
 # Cada termo combina o sistema (RAG, LLM, agente) com teste/avaliação e cobre os
 # dois vocabulários: o de prática (eval, judge, golden dataset, red teaming,
@@ -53,28 +62,8 @@ terms:
   - "tool calling evaluation"
   - "multi-agent testing"
 
-# ---- Léxico em português (estrato exploratório, critério I4) ----
-# Buscado junto com `terms`; cada ocorrência registra o idioma do termo
-# (campo `lang` em matched_terms e coluna matched_languages no CSV).
-# Sobreposto por MSRKIT_TERMS_PT no .env.
-terms_by_language:
-  pt:
-    - "teste de RAG"
-    - "avaliação de RAG"
-    - "avaliacao de RAG"
-    - "teste de LLM"
-    - "avaliação de LLM"
-    - "avaliacao de LLM"
-    - "LLM como juiz"
-    - "teste de agentes"
-    - "avaliação de agentes"
-    - "avaliacao de agentes"
-    - "dataset de referência"
-    - "dataset de referencia"
-    - "teste de alucinação"
-    - "teste de alucinacao"
-    - "regressão de prompt"
-    - "regressao de prompt"
+# Só inglês, o idioma comum da área. O estrato em português saiu após a
+# execução d855: 16 termos, 63 itens, 4 termos sem casamento (ADR-050).
 
 # ---- Grupos de conceito (§3.1, RQ5) ----
 # Cada item recebe os conceitos cujo léxico casou. Rótulo de sistema do E2:
@@ -86,11 +75,11 @@ concepts:
     - "retrieval augmented"
     - "retriever"
     - "reranker"
+    - "rerank"
     - "vector store"
     - "vector database"
     - "chunking"
     - "knowledge base"
-    - "geração aumentada por recuperação"
   agente:
     - "agent"
     - "agentic"
@@ -98,19 +87,16 @@ concepts:
     - "tool calling"
     - "function calling"
     - "tool use"
-    - "agente"
   teste:
     - "test"
     - "eval"
     - "evaluation"
     - "benchmark"
     - "assertion"
-    - "oracle"
+    - "test oracle"
     - "judge"
     - "red teaming"
     - "guardrail"
-    - "teste"
-    - "avaliação"
 
 # ---- Gazetteer (§7.2) ----
 # Ferramentas e métodos conhecidos; caminho relativo a este arquivo.
@@ -123,7 +109,7 @@ screening:
     I1: "Trata de teste, avaliação com veredito, verificação ou validação de sistema RAG ou agêntico"
     I2: "Publicado ou com última atividade dentro da janela temporal"
     I3: "Conteúdo público, acessível sem autenticação de terceiro"
-    I4: "Inglês ou português"
+    I4: "Inglês"
     I5: "Artefato de código com elemento de teste identificável"
   exclusion:
     E1: "Usa LLM como ferramenta para testar outro software"
@@ -196,7 +182,6 @@ coding:
 # Idiomas alvo
 languages:
   - en
-  - pt
 
 # ---- Fontes ----
 # Cada fonte pode ser habilitada/desabilitada independentemente.
@@ -213,22 +198,42 @@ sources:
         - Python
         - TypeScript
       min_stars: 3
+      filter_bots: true
+      require_issue_term_match: true
+      issue_in: "title,body"
+      exclude_labels:
+        - requirement
+        - wontfix
+        - duplicate
+      exclude_repo_patterns:
+        - "(?i)dailyarxiv"
+        - "(?i)reading[_-]list"
+      exclude_title_patterns:
+        - "(?i)^latest\\s+\\d+\\s+papers\\b"
     # Consultas literais da §7.3 do Protocolo E2 v2, na sintaxe de busca do GitHub.
     # Rodam além dos termos. `evidence` indica o nível de evidência que a consulta
     # busca (N2: uso declarado; N3: invocação em CI).
     queries:
-      - kind: repo
-        label: repos-rag
-        q: 'RAG (eval OR test OR testing) in:name,description,readme stars:>5'
-      - kind: repo
-        label: repos-agentes
-        q: 'agentic (eval OR test OR testing) in:name,description,readme stars:>5'
+      # Repositórios: uma consulta por palavra, em nome e descrição. A busca de
+      # repositórios ignora grupos com OR: `RAG (eval OR test OR testing)` dava o
+      # mesmo que `RAG` sozinho, 27.662 repositórios (ADR-051).
+      - {kind: repo, label: repos-rag-eval, q: 'RAG eval in:name,description stars:>5'}
+      - {kind: repo, label: repos-rag-evaluation, q: 'RAG evaluation in:name,description stars:>5'}
+      - {kind: repo, label: repos-rag-test, q: 'RAG test in:name,description stars:>5'}
+      - {kind: repo, label: repos-rag-testing, q: 'RAG testing in:name,description stars:>5'}
+      - {kind: repo, label: repos-agentes-eval, q: 'agentic eval in:name,description stars:>5'}
+      - {kind: repo, label: repos-agentes-evaluation, q: 'agentic evaluation in:name,description stars:>5'}
+      - {kind: repo, label: repos-agentes-test, q: 'agentic test in:name,description stars:>5'}
+      - {kind: repo, label: repos-agentes-testing, q: 'agentic testing in:name,description stars:>5'}
       - {kind: code, label: ragas-import, evidence: N2, q: '"from ragas import" language:Python'}
       - {kind: code, label: deepeval-import, evidence: N2, q: '"import deepeval" language:Python'}
       - {kind: code, label: promptfoo-config, evidence: N2, q: 'filename:promptfooconfig.yaml'}
       - {kind: code, label: rag-metricas-teste, evidence: N2, q: '"faithfulness" "context_recall" language:Python path:tests'}
       - {kind: code, label: golden-dataset, evidence: N2, q: '"golden" "dataset" path:evals'}
-      - {kind: code, label: tool-call-assert, evidence: N2, q: '"tool_call" "assert" language:Python path:tests'}
+      # Asserções sobre chamadas de ferramenta. `"tool_call" "assert"` casava
+      # 291.840 arquivos de teste (ADR-051); estes nomes são do próprio teste.
+      - {kind: code, label: tool-calls-esperadas, evidence: N2, q: '"expected_tool_calls" language:Python path:tests'}
+      - {kind: code, label: assert-tool-call, evidence: N2, q: '"assert_tool_call" language:Python path:tests'}
       # Templates: {anchor} e {repo} expandem sobre as âncoras do gazetteer.
       - {kind: code, label: ci, evidence: N3, q: '{anchor} path:.github/workflows language:YAML'}
       - {kind: issue, label: issues-ancora, q: 'repo:{repo} is:issue label:bug'}
@@ -242,7 +247,6 @@ sources:
         - sqa
         - datascience
         - ai
-        - pt.stackoverflow   # estrato em português
       # Piloto (set/2026): enviar a lista inteira em `tagged` trouxe 0 itens em
       # 180 requisições, apesar de a documentação descrevê-la como OU; o
       # comportamento é o de um E (ADR-042). Os termos já são específicos, então
@@ -261,15 +265,22 @@ sources:
 
   devto:
     enabled: true
+    # Censo: a API não busca por texto, então a coleta lê as tags e filtra pelos
+    # termos; cerca de 1% dos artigos casa. Sem teto por consulta, a fonte inteira
+    # cabe em ~1 mil requisições (ADR-052).
+    census: true
     extra:
+      # `ai` saiu: 60 mil artigos só em set–out/2026; as páginas dela não chegavam
+      # à janela, e cobri-la exigiria mais de mil páginas.
       tags:
         - rag
         - llm
-        - ai
         - agents
         - llmops
         - testing
-      max_pages: 10
+      # Todas as páginas das tags (nov/2026: rag 6, llm 35, agents 32, testing 27,
+      # llmops 1, com 1.000 artigos por página); a coleta para ao passar da janela.
+      max_pages: 40
 
   reddit:
     # Desabilitado no Estudo E2: credenciais novas exigem aprovação manual
@@ -337,6 +348,9 @@ sources:
 
 # ---- Limites globais ----
 limits:
-  max_items_per_source: 10000
+  # O GitHub planeja 384 consultas de até 100 itens (ADR-055). Com teto de 10.000, a
+  # fb68 parou antes das issues por termo de 2024 a 2026; o plano completo pede até
+  # ~16.500 itens.
+  max_items_per_source: 20000
   max_requests_per_source: 2500
   stop_on_quota_exhausted: true

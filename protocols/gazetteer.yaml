@@ -78,6 +78,7 @@ tools:
     python_imports: [opik]
     packages: [opik]
     repos: [comet-ml/opik]
+    ambiguous: true
   - id: openai-evals
     name: OpenAI Evals
     family: avaliacao-llm-rag
@@ -85,6 +86,7 @@ tools:
     packages: [evals]
     cli: [oaieval]
     repos: [openai/evals]
+    ambiguous: true
     search_token: oaieval
   - id: inspect-ai
     name: Inspect AI
@@ -169,6 +171,7 @@ tools:
     python_imports: [pyrit]
     packages: [pyrit]
     repos: [Azure/PyRIT]
+    ambiguous: true
   - id: llm-guard
     name: LLM Guard
     family: guardrails-seguranca
@@ -186,6 +189,7 @@ tools:
     python_imports: [ranx]
     packages: [ranx]
     repos: [AmenRa/ranx]
+    ambiguous: true
   - id: ir-measures
     name: ir_measures
     family: recuperacao
@@ -209,6 +213,7 @@ tools:
     python_imports: [beir]
     packages: [beir]
     repos: [beir-cellar/beir]
+    ambiguous: true
   - id: mteb
     name: MTEB
     family: recuperacao
@@ -216,6 +221,7 @@ tools:
     python_imports: [mteb]
     packages: [mteb]
     repos: [embeddings-benchmark/mteb]
+    ambiguous: true
 
   # ---- Agentes: benchmarks e harnesses ---------------------------------
   - id: agentbench
@@ -243,7 +249,11 @@ tools:
     family: agentes
     applies_to: [agente]
     aliases: [BFCL]
+    python_imports: [bfcl_eval]
+    packages: [bfcl-eval]
+    cli: [bfcl generate, bfcl evaluate]
     repos: [ShishirPatil/gorilla]
+    ambiguous: true
     search_token: BFCL
   - id: agentdojo
     name: AgentDojo
@@ -285,21 +295,26 @@ methods:
     name: metamorphic testing
     aliases: [metamorphic relation, invariance test, paraphrase test, consistency check, teste metamórfico]
     oracle: derivado
+    ambiguous: true
   - id: property-based-testing
     name: property-based testing
     aliases: [property test, property-based test, teste de propriedade]
     oracle: derivado
+    ambiguous: true
   - id: golden-dataset
     name: golden dataset
     aliases: [gold standard, ground truth, reference set, eval set, reference answers, dataset de referência]
     oracle: referencia
+    ambiguous: true
   - id: eval-regression
     name: eval regression
     aliases: [regression testing, quality gate, CI gate, prompt regression, snapshot test]
     oracle: referencia
+    ambiguous: true
   - id: red-teaming
     name: red teaming
     aliases: [adversarial eval, jailbreak testing, prompt injection test, fault injection]
+    ambiguous: true
   - id: synthetic-test-generation
     name: synthetic test generation
     aliases: [synthetic dataset, test set generation, synthetic eval data]
@@ -307,11 +322,14 @@ methods:
     name: trajectory evaluation
     aliases: [trajectory eval, step-level eval, execution trace, tool call evaluation]
     applies_to: [agente]
+    ambiguous: true
   - id: human-evaluation
     name: human evaluation
     aliases: [human-in-the-loop evaluation, manual review, human annotation]
     oracle: humano
+    ambiguous: true
   - id: assertion-based-testing
     name: assertion-based testing
     aliases: [deterministic assertion, exact match, schema validation, structured output validation]
     oracle: especificado
+    ambiguous: true

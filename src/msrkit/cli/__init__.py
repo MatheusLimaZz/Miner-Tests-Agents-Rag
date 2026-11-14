@@ -18,6 +18,7 @@ embedding code can override it in one place.
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -52,7 +53,11 @@ if sys.platform == "win32":
 
 
 # Default data directory (overridable: command modules read it from here at call time)
-DATA_DIR = Path("data") if Path("data").exists() else (PROJECT_ROOT / "data")
+DATA_DIR = (
+    Path(os.environ["MSRKIT_DATA_DIR"]).resolve()
+    if os.environ.get("MSRKIT_DATA_DIR")
+    else (Path("data") if Path("data").exists() else (PROJECT_ROOT / "data"))
+)
 
 
 def _version_callback(value: bool) -> None:
@@ -81,10 +86,11 @@ def main(
     env_path = Path(".env") if Path(".env").exists() else (PROJECT_ROOT / ".env")
     load_dotenv(env_path)
 
-    if ctx.invoked_subcommand is None:
-        import os
-        import sys
+    global DATA_DIR
+    if os.environ.get("MSRKIT_DATA_DIR"):
+        DATA_DIR = Path(os.environ["MSRKIT_DATA_DIR"]).resolve()
 
+    if ctx.invoked_subcommand is None:
         is_interactive = (
             sys.stdin
             and sys.stdin.isatty()

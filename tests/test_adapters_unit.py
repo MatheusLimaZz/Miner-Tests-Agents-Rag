@@ -456,6 +456,61 @@ class TestSearchLoopsAndQueryBuilding:
         assert "language:Python" in qs
         assert "stars:>=5" in qs
 
+    def test_github_issue_queries_are_restricted_to_issues(self) -> None:
+        from datetime import date
+
+        adapter = GitHubAdapter()
+        window = {"since": date(2023, 1, 1), "until": date(2026, 8, 31)}
+        q = Query(source="github", terms=["agent testing"], kind="issue", **window)
+        assert adapter._build_single_query_string(q, term="agent testing", language="Python") == (
+            '"agent testing" created:2023-01-01..2026-08-31 language:Python is:issue'
+        )
+        assert adapter._build_query_string(q).endswith(" is:issue")
+        for kind in ("repo", "code"):
+            other = Query(source="github", terms=["agent testing"], kind=kind, **window)
+            assert "is:issue" not in adapter._build_single_query_string(other, term="x")
+        # A literal query that already sets the type is kept as written.
+        for literal in ("repo:o/r is:issue label:bug", "rag is:pr", "rag type:issue"):
+            raw = Query(source="github", terms=[literal], kind="issue", raw=True)
+            assert adapter._build_single_query_string(raw, term=literal) == literal
+
+    def test_github_422_keeps_other_languages_and_fails_the_query(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from msrkit.adapters.github import QueryRejectedError
+
+        adapter = GitHubAdapter()
+
+        def fake_get(url: str, params: dict[str, Any] | None = None, **kw: Any) -> MagicMock:
+            resp = MagicMock()
+            assert params is not None
+            if "language:Python" in params["q"]:
+                resp.status_code = 422
+                resp.json.return_value = {
+                    "message": "Validation Failed",
+                    "errors": [{"message": "Query must include 'is:issue' or 'is:pull-request'"}],
+                }
+            else:
+                resp.status_code = 200
+                resp.json.return_value = {
+                    "items": [{"id": 7, "html_url": "https://github.com/o/r/issues/7"}]
+                }
+            return resp
+
+        monkeypatch.setattr(adapter, "_governed_get", fake_get)
+        q = Query(
+            source="github",
+            terms=["t"],
+            kind="issue",
+            extra={"languages": ["Python", "TypeScript"]},
+            limit=10,
+        )
+        got = []
+        with pytest.raises(QueryRejectedError, match="is:pull-request"):
+            for raw in adapter.search(q):
+                got.append(raw.native_id)
+        assert got == ["7"]  # the TypeScript items came through before the error
+
     def test_github_search_multiple_terms(self, monkeypatch: pytest.MonkeyPatch) -> None:
         adapter = GitHubAdapter()
         mock_resp = MagicMock()
@@ -950,7 +1005,7 @@ class TestSearchLoopsAndQueryBuilding:
         item_ds = adapter.normalize(raw_ds)
         assert item_so.id != item_ds.id
 
-    def test_github_code_search_omits_created_and_stars_and_sorts_indexed(
+    def test_github_code_search_omits_created_stars_and_sort(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         adapter = GitHubAdapter()
@@ -994,7 +1049,7 @@ class TestSearchLoopsAndQueryBuilding:
         qs = captured_params[0]["q"]
         assert "created:" not in qs
         assert "stars:" not in qs
-        assert captured_params[0]["sort"] == "indexed"
+        assert "sort" not in captured_params[0]  # closing down; best match (ADR-053)
 
     def test_github_bot_filtering_opt_in(self, monkeypatch: pytest.MonkeyPatch) -> None:
         adapter = GitHubAdapter()
@@ -1034,6 +1089,188 @@ class TestSearchLoopsAndQueryBuilding:
         items_filtered = list(adapter.search(q_filtered))
         assert len(items_filtered) == 1
         assert items_filtered[0].native_id == "102"
+
+    def test_github_issue_query_building_qualifiers(self) -> None:
+        adapter = GitHubAdapter()
+        # Open query with issue_in and issue_qualifiers
+        q = Query(
+            source="github",
+            terms=["rerank eval"],
+            kind="issue",
+            extra={"issue_in": "title,body", "issue_qualifiers": "state:open"},
+        )
+        qs_single = adapter._build_single_query_string(q, term="rerank eval")
+        assert "is:issue" in qs_single
+        assert "in:title,body" in qs_single
+        assert "state:open" in qs_single
+
+        qs_full = adapter._build_query_string(q)
+        assert "is:issue" in qs_full
+        assert "in:title,body" in qs_full
+        assert "state:open" in qs_full
+
+        # Literal raw query stays verbatim
+        q_raw = Query(
+            source="github",
+            terms=["repo:foo/bar is:issue label:bug"],
+            kind="issue",
+            raw=True,
+            extra={"issue_in": "title,body", "issue_qualifiers": "state:open"},
+        )
+        qs_raw = adapter._build_single_query_string(q_raw, term=q_raw.terms[0])
+        assert qs_raw == "repo:foo/bar is:issue label:bug"
+
+    def test_github_issue_discards_pull_requests(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        adapter = GitHubAdapter()
+        monkeypatch.setattr(
+            adapter, "_env", lambda k: "mock_token" if k == "GITHUB_TOKEN" else None
+        )
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {
+            "total_count": 2,
+            "items": [
+                {
+                    "id": 201,
+                    "title": "Fix bug PR",
+                    "user": {"login": "alice"},
+                    "pull_request": {"url": "https://api.github.com/repos/o/r/pulls/1"},
+                    "html_url": "https://github.com/o/r/pull/1",
+                },
+                {
+                    "id": 202,
+                    "title": "Actual Issue",
+                    "user": {"login": "bob"},
+                    "html_url": "https://github.com/o/r/issues/2",
+                },
+            ],
+        }
+        monkeypatch.setattr(adapter, "_governed_get", lambda *args, **kwargs: resp)
+
+        q = Query(source="github", terms=["bug"], kind="issue", limit=10)
+        items = list(adapter.search(q))
+        assert len(items) == 1
+        assert items[0].native_id == "202"
+        discards = adapter.pop_discards()
+        assert len(discards) == 1
+        assert discards[0]["native_id"] == "201"
+        assert discards[0]["reason"] == "pull_request"
+
+    def test_github_issue_require_term_match(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        adapter = GitHubAdapter()
+        monkeypatch.setattr(
+            adapter, "_env", lambda k: "mock_token" if k == "GITHUB_TOKEN" else None
+        )
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {
+            "total_count": 2,
+            "items": [
+                {
+                    "id": 301,
+                    "title": "Unrelated issue title",
+                    "body": "Body mentioning nothing relevant, match was only in comment",
+                    "html_url": "https://github.com/o/r/issues/301",
+                },
+                {
+                    "id": 302,
+                    "title": "Issue about RAG eval",
+                    "body": "Discussing RAG eval metrics",
+                    "html_url": "https://github.com/o/r/issues/302",
+                },
+            ],
+        }
+        monkeypatch.setattr(adapter, "_governed_get", lambda *args, **kwargs: resp)
+
+        # With require_issue_term_match: True
+        q = Query(
+            source="github",
+            terms=["RAG eval"],
+            kind="issue",
+            extra={"require_issue_term_match": True},
+            limit=10,
+        )
+        items = list(adapter.search(q))
+        assert len(items) == 1
+        assert items[0].native_id == "302"
+        discards = adapter.pop_discards()
+        assert len(discards) == 1
+        assert discards[0]["native_id"] == "301"
+        assert discards[0]["reason"] == "no_term_match"
+
+        # Raw query is unaffected by require_issue_term_match
+        q_raw = Query(
+            source="github",
+            terms=["RAG eval"],
+            kind="issue",
+            raw=True,
+            extra={"require_issue_term_match": True},
+            limit=10,
+        )
+        items_raw = list(adapter.search(q_raw))
+        assert len(items_raw) == 2
+        assert adapter.pop_discards() == []
+
+    def test_github_issue_noise_filters(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        adapter = GitHubAdapter()
+        monkeypatch.setattr(
+            adapter, "_env", lambda k: "mock_token" if k == "GITHUB_TOKEN" else None
+        )
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {
+            "total_count": 5,
+            "items": [
+                {
+                    "id": 401,
+                    "title": "Latest 10 papers in AI",
+                    "html_url": "https://github.com/normal-user/normal-repo/issues/1",
+                },
+                {
+                    "id": 402,
+                    "title": "Paper discussion",
+                    "html_url": "https://github.com/DailyArXiv/daily-papers/issues/2",
+                },
+                {
+                    "id": 403,
+                    "title": "Weekly reading digest",
+                    "html_url": "https://github.com/researcher/reading_list/issues/3",
+                },
+                {
+                    "id": 404,
+                    "title": "Feature tracker",
+                    "labels": [{"name": "requirement"}],
+                    "html_url": "https://github.com/normal-user/normal-repo/issues/4",
+                },
+                {
+                    "id": 405,
+                    "title": "Legitimate bug report",
+                    "labels": [{"name": "bug"}],
+                    "html_url": "https://github.com/normal-user/normal-repo/issues/5",
+                },
+            ],
+        }
+        monkeypatch.setattr(adapter, "_governed_get", lambda *args, **kwargs: resp)
+
+        q = Query(
+            source="github",
+            terms=["papers"],
+            kind="issue",
+            extra={
+                "exclude_title_patterns": [r"(?i)^latest\s+\d+\s+papers\b"],
+                "exclude_repo_patterns": [r"(?i)dailyarxiv", r"(?i)reading[_-]list"],
+                "exclude_labels": ["requirement", "wontfix"],
+            },
+            limit=10,
+        )
+        items = list(adapter.search(q))
+        assert len(items) == 1
+        assert items[0].native_id == "405"
+        discards = adapter.pop_discards()
+        assert len(discards) == 4
+        discard_ids = {d["native_id"] for d in discards}
+        assert discard_ids == {"401", "402", "403", "404"}
+        assert all(d["reason"] == "noise_filter" for d in discards)
 
     def test_reddit_quotes_multi_word_terms(self, monkeypatch: pytest.MonkeyPatch) -> None:
         adapter = RedditAdapter()

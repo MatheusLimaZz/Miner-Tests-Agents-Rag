@@ -60,6 +60,7 @@ class MethodEntry(BaseModel):
     oracle: OracleLevel | None = None  # typical rung on the oracle ladder (§5.3)
     applies_to: list[SystemLabel] = ["rag", "agente"]
     origin: Origin = "seed"
+    ambiguous: bool = False
 
     def names(self) -> list[str]:
         return list(dict.fromkeys([self.name, *self.aliases]))
@@ -101,6 +102,14 @@ class Gazetteer(BaseModel):
             if entry.id == entry_id:
                 return entry
         return None
+
+    def self_tools_by_repo(self) -> dict[str, set[str]]:
+        """Map lowercase owner/repo to set of tool IDs hosted by that repository."""
+        mapping: dict[str, set[str]] = {}
+        for tool in self.tools:
+            for r in tool.repos:
+                mapping.setdefault(r.lower(), set()).add(tool.id)
+        return mapping
 
 
 def load_gazetteer(path: str | Path) -> Gazetteer:

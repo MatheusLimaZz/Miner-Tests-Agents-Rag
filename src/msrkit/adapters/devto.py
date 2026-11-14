@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import re
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -108,6 +109,8 @@ class DevToAdapter(BaseAdapter):
                     "page": page,
                     "per_page": per_page,
                 }
+                if "state" in q.extra:
+                    params["state"] = q.extra["state"]
 
                 resp = self._governed_get(f"{_BASE_URL}/articles", params=params)
 
@@ -126,6 +129,18 @@ class DevToAdapter(BaseAdapter):
 
                 all_older_than_since = bool(q.since and articles)
                 for article in articles:
+                    pub_str = article.get("published_at") or article.get("created_at")
+                    if pub_str and q.since:
+                        try:
+                            pub_dt = datetime.fromisoformat(pub_str.replace("Z", "+00:00"))
+                            if pub_dt.date() >= q.since:
+                                all_older_than_since = False
+                        except (ValueError, TypeError):
+                            all_older_than_since = False
+                    elif not pub_str:
+                        all_older_than_since = False
+
+                for article in articles:
                     if total_yielded >= limit:
                         return
 
@@ -140,30 +155,67 @@ class DevToAdapter(BaseAdapter):
                             pub_dt = datetime.fromisoformat(pub_str.replace("Z", "+00:00"))
                             pub_date = pub_dt.date()
                             if q.until and pub_date > q.until:
-                                all_older_than_since = False
                                 continue
                             if q.since and pub_date < q.since:
                                 continue
-                            all_older_than_since = False
                         except (ValueError, TypeError):
-                            all_older_than_since = False
+                            pass
+
+                    art_title = article.get("title") or ""
+                    art_desc = article.get("description") or ""
+                    tags_raw = article.get("tag_list") or []
+                    if isinstance(tags_raw, str):
+                        art_tags = [t.strip() for t in tags_raw.split(",") if t.strip()]
                     else:
-                        all_older_than_since = False
+                        art_tags = [str(t).strip() for t in tags_raw if str(t).strip()]
 
+                    full_body: str | None = None
                     if q.terms:
-                        art_title = article.get("title") or ""
-                        art_desc = article.get("description") or ""
-                        if not match_terms(q.terms, title=art_title, body=art_desc):
-                            self._record_discard(
-                                art_id, art_title, article.get("url") or "", "no_term_match"
-                            )
-                            continue
+                        # 1) Direct adjacent match on title + description
+                        if match_terms(q.terms, title=art_title, body=art_desc):
+                            pass
+                        else:
+                            # Cheap candidate gate on title + description (+ tags):
+                            # For multi-word terms, check if all words >= 3 chars occur in
+                            # title + description + tags (word-by-word, no adjacency required)
+                            haystack_text = f"{art_title} {art_desc} {' '.join(art_tags)}".lower()
+                            tokens = set(re.findall(r"\b\w+\b", haystack_text))
+                            passed_candidate_gate = False
+                            for term in q.terms:
+                                term_words = [
+                                    w.lower() for w in re.findall(r"\b\w+\b", term) if len(w) >= 3
+                                ]
+                                if len(term_words) >= 2 and all(w in tokens for w in term_words):
+                                    passed_candidate_gate = True
+                                    break
 
-                    seen_ids.add(art_id)
+                            if not passed_candidate_gate:
+                                self._record_discard(
+                                    art_id, art_title, article.get("url") or "", "no_term_match"
+                                )
+                                continue
+
+                            # Passed candidate gate: fetch full body to confirm match
+                            if q.extra.get("full_text", True):
+                                full_body = self._fetch_body(art_id)
+
+                            if not match_terms(
+                                q.terms,
+                                title=art_title,
+                                body=full_body or art_desc,
+                                tags=art_tags,
+                            ):
+                                self._record_discard(
+                                    art_id, art_title, article.get("url") or "", "no_term_match"
+                                )
+                                continue
+
                     payload = dict(article)
                     if q.extra.get("full_text", True):
-                        # Only kept articles pay the extra request (Protocol E2 v2, §6.5).
-                        payload["_body_markdown"] = self._fetch_body(art_id)
+                        if full_body is None:
+                            full_body = self._fetch_body(art_id)
+                        payload["_body_markdown"] = full_body
+
                     yield self._make_raw_item(
                         source=self.name,
                         native_id=art_id,
@@ -171,7 +223,9 @@ class DevToAdapter(BaseAdapter):
                     )
                     total_yielded += 1
 
-                if all_older_than_since:
+                if all_older_than_since and (
+                    params.get("state") == "fresh" or len(articles) < per_page
+                ):
                     break
 
                 # dev.to returns empty list when no more pages
