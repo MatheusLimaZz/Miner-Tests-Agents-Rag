@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING, Any, ClassVar
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from msrkit.governor import Governor
+
 import httpx
 
 from msrkit.adapters.base import BaseAdapter
@@ -58,8 +60,16 @@ class QueryRejectedError(RuntimeError):
     """GitHub refused one or more search queries with 422 (invalid query)."""
 
 
-def is_bot_author(author: str | None) -> bool:
-    """Return True if the author handle matches automated bot accounts."""
+def is_bot_author(author: str | None, account_type: str | None = None) -> bool:
+    """Whether an issue author is an automated account.
+
+    GitHub Apps are declared by the API itself (`user.type == "Bot"`, login ending in
+    `[bot]`). Machine users are ordinary accounts, known only by the login: the usual
+    `-bot` suffix and the dependency tools. A login that merely ends in "bot" is not
+    taken as one, since people have such names.
+    """
+    if account_type == "Bot":
+        return True
     if not author:
         return False
     lower = author.lower()
@@ -72,179 +82,12 @@ def is_bot_author(author: str | None) -> bool:
     )
 
 
-def _append_issue_qualifiers(parts: list[str], q: Query) -> None:
-    """Append issue-specific qualifiers (is:issue, in:..., etc.) when kind == 'issue'."""
-    if q.kind != "issue" or q.raw:
-        return
-    if "is:issue" not in parts:
-        parts.append("is:issue")
-    issue_in = (q.extra or {}).get("issue_in")
-    if isinstance(issue_in, str) and issue_in.strip():
-        in_qual = f"in:{issue_in.strip()}"
-        if in_qual not in parts:
-            parts.append(in_qual)
-    issue_qualifiers = (q.extra or {}).get("issue_qualifiers")
-    if isinstance(issue_qualifiers, str):
-        for token in issue_qualifiers.split():
-            if token and token not in parts:
-                parts.append(token)
-    elif isinstance(issue_qualifiers, (list, tuple)):
-        for item in issue_qualifiers:
-            if isinstance(item, str):
-                for token in item.split():
-                    if token and token not in parts:
-                        parts.append(token)
-
-
-def _issue_labels(item: dict[str, Any]) -> list[str]:
-    """Extract label names from a GitHub issue item."""
-    labels: list[str] = []
-    for label in item.get("labels") or []:
-        if isinstance(label, dict):
-            name = label.get("name")
-            if name:
-                labels.append(str(name))
-        elif label:
-            labels.append(str(label))
-    return labels
-
-
-def _extract_repo_name(item: dict[str, Any], kind: str = "") -> str:
-    """Extract owner/repo name from an API item across search kinds."""
-    full_name = item.get("full_name")
-    if isinstance(full_name, str) and full_name.strip():
-        return full_name.strip()
-
-    repo = item.get("repository")
-    if isinstance(repo, dict):
-        repo_fn = repo.get("full_name")
-        if isinstance(repo_fn, str) and repo_fn.strip():
-            return repo_fn.strip()
-
-    html_url = item.get("html_url")
-    if isinstance(html_url, str) and html_url:
-        url = html_url
-        if "://" in url:
-            url = url.split("://", 1)[1]
-        segments = [s for s in url.split("/") if s]
-        if len(segments) >= 3 and "." in segments[0]:
-            return f"{segments[1]}/{segments[2]}"
-        if len(segments) >= 2 and "." not in segments[0]:
-            return f"{segments[0]}/{segments[1]}"
-
-    repo_url = item.get("repository_url")
-    if isinstance(repo_url, str) and repo_url:
-        segments = [s for s in repo_url.rstrip("/").split("/") if s]
-        if len(segments) >= 2:
-            return f"{segments[-2]}/{segments[-1]}"
-
-    return ""
-
-
-def _compile_noise_filters(
-    extra: dict[str, Any],
-) -> tuple[list[re.Pattern[str]], list[re.Pattern[str]], set[str]]:
-    """Precompile regex noise filters and normalize excluded labels to lowercase set."""
-    exclude_title_patterns: list[re.Pattern[str]] = []
-    for pat in extra.get("exclude_title_patterns") or []:
-        if isinstance(pat, str) and pat.strip():
-            exclude_title_patterns.append(re.compile(pat.strip(), re.IGNORECASE))
-
-    exclude_repo_patterns: list[re.Pattern[str]] = []
-    for pat in extra.get("exclude_repo_patterns") or []:
-        if isinstance(pat, str) and pat.strip():
-            exclude_repo_patterns.append(re.compile(pat.strip(), re.IGNORECASE))
-
-    exclude_labels: set[str] = {
-        str(lbl).strip().lower()
-        for lbl in (extra.get("exclude_labels") or [])
-        if lbl and str(lbl).strip()
-    }
-
-    return exclude_title_patterns, exclude_repo_patterns, exclude_labels
-
-
-def _filter_reason(
-    item: dict[str, Any],
-    kind: str,
-    q: Query,
-    term: str | None = None,
-    *,
-    exclude_title_patterns: list[re.Pattern[str]] | None = None,
-    exclude_repo_patterns: list[re.Pattern[str]] | None = None,
-    exclude_labels: set[str] | None = None,
-) -> str | None:
-    """Return discard reason if item should be filtered out, else None."""
-    # 1. PR leakage in issue search
-    if kind == "issue" and "pull_request" in item:
-        return "pull_request"
-
-    # 2. Automated bot author
-    filter_bots = bool((q.extra or {}).get("filter_bots", False))
-    if filter_bots:
-        author = (
-            (item.get("user") or {}).get("login")
-            if kind == "issue"
-            else (item.get("owner") or {}).get("login")
-        )
-        if not author and kind == "code":
-            author = ((item.get("repository") or {}).get("owner") or {}).get("login")
-        if is_bot_author(author):
-            return "bot_author"
-
-    # Local filters apply only when not raw query
-    if not q.raw:
-        if (
-            exclude_title_patterns is None
-            or exclude_repo_patterns is None
-            or exclude_labels is None
-        ):
-            c_titles, c_repos, c_labels = _compile_noise_filters(q.extra or {})
-            if exclude_title_patterns is None:
-                exclude_title_patterns = c_titles
-            if exclude_repo_patterns is None:
-                exclude_repo_patterns = c_repos
-            if exclude_labels is None:
-                exclude_labels = c_labels
-
-        labels = _issue_labels(item) if kind == "issue" else []
-        title = item.get("title") or item.get("name") or ""
-        repo_name = _extract_repo_name(item, kind)
-
-        # Exclude labels check
-        if (
-            kind == "issue"
-            and exclude_labels
-            and any(lbl.lower() in exclude_labels for lbl in labels)
-        ):
-            return "noise_filter"
-
-        # Exclude title patterns check
-        if (
-            exclude_title_patterns
-            and title
-            and any(pat.search(title) for pat in exclude_title_patterns)
-        ):
-            return "noise_filter"
-
-        # Exclude repo patterns check
-        if (
-            exclude_repo_patterns
-            and repo_name
-            and any(pat.search(repo_name) for pat in exclude_repo_patterns)
-        ):
-            return "noise_filter"
-
-        # Require issue term match check
-        if kind == "issue" and bool((q.extra or {}).get("require_issue_term_match", False)):
-            check_terms = [term] if term else list(q.terms)
-            if check_terms:
-                body = item.get("body")
-                matched = match_terms(check_terms, title=title, body=body, tags=labels)
-                if not matched:
-                    return "no_term_match"
-
-    return None
+def issue_labels(payload: dict[str, Any]) -> list[str]:
+    """Label names of an issue as the search API returns them."""
+    return [
+        label.get("name", "") if isinstance(label, dict) else str(label)
+        for label in (payload.get("labels") or [])
+    ]
 
 
 @register
@@ -252,8 +95,9 @@ class GitHubAdapter(BaseAdapter):
     """GitHub adapter using the REST search API."""
 
     name: ClassVar[str] = "github"
-    # 0.2.0: issue searches add is:issue (ADR-049); 0.2.1: code search without sort (ADR-053)
-    version: ClassVar[str] = "0.2.1"
+    # 0.2.0: issue searches add is:issue (ADR-049); 0.2.1: code search without sort (ADR-053);
+    # 0.3.0: issue filters (automated authors, labels) and a fixed page size (ADR-057)
+    version: ClassVar[str] = "0.3.0"
     policy: ClassVar[SourcePolicy] = SourcePolicy(
         requires_auth=True,
         auth_env_vars=["GITHUB_TOKEN"],
@@ -279,6 +123,11 @@ class GitHubAdapter(BaseAdapter):
         has_official_api=True,
         official_api_name="GitHub REST v3 / GraphQL v4",
     )
+
+    def __init__(self, governor: Governor | None = None) -> None:
+        super().__init__(governor)
+        # total_count of the queries counted so far: "<kind>|<query string>" -> results.
+        self._result_counts: dict[str, int] = {}
 
     def _build_client(self) -> httpx.Client:
         """Build client with GitHub-specific headers."""
@@ -355,8 +204,16 @@ class GitHubAdapter(BaseAdapter):
         fixed_dates = q.raw and any("created:" in t for t in q.terms)
         return (q.kind or "repo") != "code" and not fixed_dates
 
+    def countable(self, q: Query) -> bool:
+        """Every search reports total_count, code search included (it needs the token)."""
+        return (q.kind or "repo") != "code" or bool(self._env("GITHUB_TOKEN"))
+
     def _total_counts(self, q: Query) -> list[int] | None:
-        """total_count of each (term, language) query search() issues; None on failure."""
+        """total_count of each (term, language) query search() issues; None on failure.
+
+        Each count is kept by query string: search() shares a query's item cap among
+        its languages in proportion to them (see _language_quotas).
+        """
         kind = q.kind or "repo"
         endpoint = _KIND_ENDPOINT.get(kind, "/search/repositories")
         terms: list[str | None] = list(q.terms) or [None]
@@ -371,8 +228,45 @@ class GitHubAdapter(BaseAdapter):
                 if resp.status_code != 200:
                     logger.warning("GitHub estimate failed: %d", resp.status_code)
                     return None
-                counts.append(resp.json().get("total_count", 0))
+                count = int(resp.json().get("total_count", 0) or 0)
+                self._result_counts[f"{kind}|{query_string}"] = count
+                counts.append(count)
         return counts
+
+    def _language_quotas(
+        self, q: Query, term: str | None, languages: list[Any], budget: int
+    ) -> list[tuple[Any, int]]:
+        """(language, share of `budget`) for one term, smallest result count first.
+
+        The shares are proportional to the result counts population() read, so a single
+        sampling fraction holds across the query's languages and its sampling weight is
+        valid for all of them (ADR-057). Filling the cap in the order of the protocol
+        took every item from the first language whenever it alone had enough results.
+        A language that cannot fill its share passes the rest on to the next, larger one.
+        Without the counts, the first language may take the whole budget, as before.
+        """
+        kind = q.kind or "repo"
+        counts = [
+            self._result_counts.get(
+                f"{kind}|{self._build_single_query_string(q, term=term, language=lang)}"
+            )
+            for lang in languages
+        ]
+        known = [c for c in counts if c is not None]
+        if len(languages) < 2 or len(known) < len(counts) or sum(known) == 0:
+            return [(lang, budget if i == 0 else 0) for i, lang in enumerate(languages)]
+        total = sum(known)
+        shares = [budget * c / total for c in known]
+        quotas = [int(s) for s in shares]
+        by_remainder = sorted(range(len(shares)), key=lambda i: shares[i] - quotas[i], reverse=True)
+        for i in by_remainder[: budget - sum(quotas)]:
+            quotas[i] += 1
+        for i, count in enumerate(known):  # a language with results is never left out
+            if count and not quotas[i] and max(quotas) > 1:
+                quotas[quotas.index(max(quotas))] -= 1
+                quotas[i] = 1
+        order = sorted(range(len(languages)), key=lambda i: known[i])
+        return [(languages[i], quotas[i]) for i in order]
 
     def partition(self, q: Query) -> list[Query]:
         """Split by term, then by date window until each query fits the 1,000 cap."""
@@ -412,26 +306,42 @@ class GitHubAdapter(BaseAdapter):
         total_yielded = 0
         seen_ids: set[str] = set()
 
-        title_pats, repo_pats, exclude_labels = _compile_noise_filters(q.extra or {})
         terms_to_search: list[str | None] = list(q.terms) or [None]
         languages = [None] if q.raw else (q.extra.get("languages") or [None])
         rejected: list[str] = []
+        # Issue filters (protocol `extra`): automated authors and labels that mark
+        # records outside the study. What they drop is recorded as a discard.
+        filter_bots = kind == "issue" and bool(q.extra.get("filter_bots", False))
+        excluded_labels = (
+            {str(label).lower() for label in q.extra.get("exclude_labels") or []}
+            if kind == "issue"
+            else set()
+        )
 
         for term in terms_to_search:
-            for lang in languages:
+            carry = 0  # share a language did not use, passed on to the next
+            for lang, quota in self._language_quotas(q, term, languages, limit - total_yielded):
                 if total_yielded >= limit:
                     return
+                lang_limit = quota + carry
+                carry = lang_limit
+                if lang_limit <= 0:
+                    continue
+                lang_yielded = 0
 
                 if term is not None or lang is not None:
                     query_string = self._build_single_query_string(q, term=term, language=lang)
                 else:
                     query_string = self._build_query_string(q)
 
+                # One page size for every page of a query. Shrinking it as items come in
+                # shifts the page boundaries: with a filter dropping items, the next page
+                # would return results already seen and count their discards twice.
+                page_size = min(self.policy.max_page_size, lang_limit)
                 for page in range(1, (self.policy.max_pages or 10) + 1):
-                    if total_yielded >= limit:
-                        return
+                    if lang_yielded >= lang_limit:
+                        break
 
-                    page_size = min(self.policy.max_page_size, limit - total_yielded)
                     params: dict[str, Any] = {
                         "q": query_string,
                         "per_page": page_size,
@@ -465,8 +375,8 @@ class GitHubAdapter(BaseAdapter):
                         break
 
                     for item in items:
-                        if total_yielded >= limit:
-                            return
+                        if lang_yielded >= lang_limit:
+                            break
                         if kind == "code":
                             repo_name = (item.get("repository") or {}).get("full_name") or ""
                             path = item.get("path") or ""
@@ -479,32 +389,33 @@ class GitHubAdapter(BaseAdapter):
                             native_id = str(item.get("id", ""))
                         if not native_id or native_id in seen_ids:
                             continue
+                        seen_ids.add(native_id)
 
-                        reason = _filter_reason(
-                            item,
-                            kind,
-                            q,
-                            term=term,
-                            exclude_title_patterns=title_pats,
-                            exclude_repo_patterns=repo_pats,
-                            exclude_labels=exclude_labels,
-                        )
+                        user = item.get("user") or {}
+                        reason = None
+                        if filter_bots and is_bot_author(user.get("login"), user.get("type")):
+                            reason = "bot_author"
+                        elif excluded_labels and excluded_labels.intersection(
+                            name.lower() for name in issue_labels(item)
+                        ):
+                            reason = "excluded_label"
                         if reason is not None:
                             self._record_discard(
                                 native_id=native_id,
-                                title=item.get("title") or item.get("name") or "",
+                                title=item.get("title") or "",
                                 url=item.get("html_url") or "",
                                 reason=reason,
                             )
                             continue
 
-                        seen_ids.add(native_id)
                         yield self._make_raw_item(
                             source=self.name,
                             native_id=native_id,
                             payload={**item, "_search_kind": kind},
                         )
                         total_yielded += 1
+                        lang_yielded += 1
+                        carry = lang_limit - lang_yielded
 
                     if len(items) < page_size:
                         break
@@ -632,7 +543,7 @@ class GitHubAdapter(BaseAdapter):
     ) -> Item:
         created_at = self._parse_dt(p.get("created_at"))
         updated_at = self._parse_dt(p.get("updated_at"))
-        labels = _issue_labels(p)
+        labels = issue_labels(p)
 
         matched = match_terms(terms or [], title=p.get("title"), body=p.get("body"), tags=labels)
 
@@ -686,8 +597,6 @@ class GitHubAdapter(BaseAdapter):
         if kind == "repo" and extra.get("min_stars"):
             parts.append(f"stars:>={extra['min_stars']}")
 
-        _append_issue_qualifiers(parts, q)
-
         return self._with_issue_type(kind, " ".join(parts))
 
     def _build_single_query_string(
@@ -726,8 +635,6 @@ class GitHubAdapter(BaseAdapter):
 
         if kind == "repo" and q.extra.get("min_stars"):
             parts.append(f"stars:>={q.extra['min_stars']}")
-
-        _append_issue_qualifiers(parts, q)
 
         return self._with_issue_type(kind, " ".join(parts))
 

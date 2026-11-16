@@ -13,13 +13,18 @@
 #   config_files         — arquivos cuja presença indica uso = N2
 #   cli                  — comandos cuja invocação em CI indica adoção = N3
 #   repos                — owner/repo da própria ferramenta (consultas `{repo}`)
-#   ambiguous            — nome colide com palavra comum: só conta com contexto
+#   ambiguous            — o nome colide com palavra comum ou com outro software. A
+#                          menção em texto só conta com o léxico do protocolo na janela
+#                          de contexto ou com sinal estrutural no mesmo repositório; em
+#                          CI, o nome solto num comando não basta: o passo tem de chamar
+#                          o comando ou o módulo, instalar o pacote ou usar uma ação do
+#                          repositório da ferramenta (ADR-056)
 #   anchor               — expande `{anchor}`/`{repo}` nas consultas (padrão: true)
 #
 # Repositórios e nomes de pacote devem ser conferidos no piloto.
 # ==========================================================================
 
-version: "0.1"
+version: "0.2"
 
 tools:
   # ---- Avaliação e teste de LLM/RAG -------------------------------------
@@ -86,7 +91,6 @@ tools:
     packages: [evals]
     cli: [oaieval]
     repos: [openai/evals]
-    ambiguous: true
     search_token: oaieval
   - id: inspect-ai
     name: Inspect AI
@@ -170,7 +174,9 @@ tools:
     family: guardrails-seguranca
     python_imports: [pyrit]
     packages: [pyrit]
-    repos: [Azure/PyRIT]
+    # Transferido de Azure/PyRIT: na 015e, `repo:Azure/PyRIT` não devolveu nenhuma issue
+    # e as issues da ferramenta vieram com o endereço novo.
+    repos: [microsoft/PyRIT]
     ambiguous: true
   - id: llm-guard
     name: LLM Guard
@@ -229,6 +235,9 @@ tools:
     family: agentes
     applies_to: [agente]
     repos: [THUDM/AgentBench]
+    # Na 015e, 14 repositórios de terceiros têm esse nome (outras ferramentas "agentbench").
+    # Sem pacote nem comando próprios, a adoção em CI desta entrada não é medida.
+    ambiguous: true
   - id: tau-bench
     name: tau-bench
     family: agentes
@@ -249,11 +258,12 @@ tools:
     family: agentes
     applies_to: [agente]
     aliases: [BFCL]
+    # Pacote do PyPI `bfcl-eval` (módulo `bfcl_eval`, comando `bfcl`), conferido em
+    # pypi.org em 14/11/2026. O pacote `bfcl` do PyPI é outra biblioteca.
     python_imports: [bfcl_eval]
     packages: [bfcl-eval]
     cli: [bfcl generate, bfcl evaluate]
     repos: [ShishirPatil/gorilla]
-    ambiguous: true
     search_token: BFCL
   - id: agentdojo
     name: AgentDojo
@@ -269,6 +279,8 @@ tools:
     python_imports: [agentevals]
     packages: [agentevals]
     repos: [langchain-ai/agentevals]
+    # Outros projetos usam o mesmo nome (`tests/AgentEvals`, `internal/agentevals`).
+    ambiguous: true
   - id: webarena
     name: WebArena
     family: agentes
@@ -295,26 +307,21 @@ methods:
     name: metamorphic testing
     aliases: [metamorphic relation, invariance test, paraphrase test, consistency check, teste metamórfico]
     oracle: derivado
-    ambiguous: true
   - id: property-based-testing
     name: property-based testing
     aliases: [property test, property-based test, teste de propriedade]
     oracle: derivado
-    ambiguous: true
   - id: golden-dataset
     name: golden dataset
     aliases: [gold standard, ground truth, reference set, eval set, reference answers, dataset de referência]
     oracle: referencia
-    ambiguous: true
   - id: eval-regression
     name: eval regression
     aliases: [regression testing, quality gate, CI gate, prompt regression, snapshot test]
     oracle: referencia
-    ambiguous: true
   - id: red-teaming
     name: red teaming
     aliases: [adversarial eval, jailbreak testing, prompt injection test, fault injection]
-    ambiguous: true
   - id: synthetic-test-generation
     name: synthetic test generation
     aliases: [synthetic dataset, test set generation, synthetic eval data]
@@ -322,14 +329,11 @@ methods:
     name: trajectory evaluation
     aliases: [trajectory eval, step-level eval, execution trace, tool call evaluation]
     applies_to: [agente]
-    ambiguous: true
   - id: human-evaluation
     name: human evaluation
     aliases: [human-in-the-loop evaluation, manual review, human annotation]
     oracle: humano
-    ambiguous: true
   - id: assertion-based-testing
     name: assertion-based testing
     aliases: [deterministic assertion, exact match, schema validation, structured output validation]
     oracle: especificado
-    ambiguous: true

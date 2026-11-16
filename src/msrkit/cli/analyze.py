@@ -25,13 +25,7 @@ app.add_typer(analyze_app, name="analyze")
 BASIS_HELP = "detections (automatic, msrkit extract) or coding (manual form, consensus)"
 
 
-def _load_units(
-    run_id: str,
-    basis: str,
-    gazetteer: Any = None,
-    *,
-    exclude_self: bool = False,
-) -> list[Any]:
+def _load_units(run_id: str, basis: str, gazetteer: Any = None) -> list[Any]:
     from msrkit.analysis import units_from_codings, units_from_detections
     from msrkit.coding import load_codings
     from msrkit.storage import ItemStorage
@@ -42,15 +36,13 @@ def _load_units(
         if not detections:
             console.print("[red]✗ No detections; run `msrkit extract` first.[/red]")
             raise typer.Exit(1)
-        return units_from_detections(
-            items, detections, gazetteer=gazetteer, exclude_self=exclude_self
-        )
+        return units_from_detections(items, detections, gazetteer=gazetteer)
     if basis == "coding":
         codings = load_codings(_cli.DATA_DIR, run_id)
         if not codings:
             console.print("[red]✗ No codings; import them with `msrkit coding import`.[/red]")
             raise typer.Exit(1)
-        return units_from_codings(items, codings, gazetteer=gazetteer, exclude_self=exclude_self)
+        return units_from_codings(items, codings, gazetteer=gazetteer)
     console.print("[red]✗ --basis must be detections or coding.[/red]")
     raise typer.Exit(1)
 
@@ -93,7 +85,7 @@ def analyze_frequency(
 
     proto = _load_run_protocol(run_id, _unwrap(protocol))
     gaz = proto.gazetteer_data if proto is not None else None
-    units = _load_units(run_id, basis, gazetteer=gaz, exclude_self=True)
+    units = _load_units(run_id, basis, gazetteer=gaz)
     try:
         pair_rows = cooccurrence(units, _unwrap(pairs))
     except ValueError as e:
@@ -148,9 +140,8 @@ def analyze_coverage(
     from msrkit.analysis import coverage, coverage_matrix, write_csv, write_matrix
 
     run_id = _resolve_run(_unwrap(run_id))
+    units = _load_units(run_id, "coding")
     proto = _load_run_protocol(run_id, _unwrap(protocol))
-    gaz = proto.gazetteer_data if proto is not None else None
-    units = _load_units(run_id, "coding", gazetteer=gaz, exclude_self=True)
     catalog = proto.coding.failure_modes if proto is not None else {}
     cells, summaries = coverage(units, catalog)
     out = _out_dir(run_id)
@@ -196,12 +187,11 @@ def analyze_oracles(
     run_id = _resolve_run(_unwrap(run_id))
     basis = _unwrap(basis)
     threshold = _unwrap(threshold)
-    proto = _load_run_protocol(run_id, _unwrap(protocol))
-    gaz = proto.gazetteer_data if proto is not None else None
-    units = _load_units(run_id, basis, gazetteer=gaz, exclude_self=True)
+    units = _load_units(run_id, basis)
     rungs: dict[str, str] = {}
-    if gaz is not None:
-        rungs = {m.id: m.oracle for m in gaz.methods if m.oracle}
+    proto = _load_run_protocol(run_id, _unwrap(protocol))
+    if proto is not None and proto.gazetteer_data is not None:
+        rungs = {m.id: m.oracle for m in proto.gazetteer_data.methods if m.oracle}
     rows = oracle_distribution(units, rungs if basis == "detections" else None)
     out = _out_dir(run_id)
     write_csv(rows, out / f"oracles_{basis}.csv")
@@ -350,12 +340,11 @@ def analyze_compare(
 
     run_id = _resolve_run(_unwrap(run_id))
     basis = _unwrap(basis)
+    units = _load_units(run_id, basis)
     proto = _load_run_protocol(run_id, _unwrap(protocol))
-    gaz = proto.gazetteer_data if proto is not None else None
-    units = _load_units(run_id, basis, gazetteer=gaz, exclude_self=True)
     rungs: dict[str, str] = {}
-    if basis == "detections" and gaz is not None:
-        rungs = {m.id: m.oracle for m in gaz.methods if m.oracle}
+    if basis == "detections" and proto is not None and proto.gazetteer_data is not None:
+        rungs = {m.id: m.oracle for m in proto.gazetteer_data.methods if m.oracle}
     rows, summaries = compare_systems(units, rungs)
     out = _out_dir(run_id)
     write_csv(rows, out / f"compare_{basis}.csv")

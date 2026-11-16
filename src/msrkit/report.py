@@ -24,13 +24,14 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import date
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
 from msrkit.dedupe import canonicalize_url
 from msrkit.extract import summarize
 from msrkit.prisma import build_flow
+from msrkit.weights import FractionRow, fractions, kish, strata
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -38,20 +39,6 @@ if TYPE_CHECKING:
     from msrkit.enrich import RepoSignals
     from msrkit.extract import Detection
     from msrkit.models import Item, Manifest, SourceManifestEntry
-
-# Ensure RepoSignals has reused_from dynamically if not present (ADR-054)
-try:
-    from msrkit.enrich import RepoSignals
-
-    if "reused_from" not in RepoSignals.model_fields:
-        from pydantic.fields import FieldInfo
-
-        RepoSignals.model_fields["reused_from"] = FieldInfo(
-            annotation=cast("Any", str | None), default=None
-        )
-        RepoSignals.model_rebuild(force=True)
-except Exception:
-    pass
 
 TOP_TERMS = 15
 TOP_ENTRIES = 15
@@ -98,6 +85,21 @@ class EvidenceSummary(BaseModel):
     detections: dict[str, int]  # level -> detections
     items_with_detection: int
     top: list[EntrySummary]
+    # What the extraction refused, from extract/<run>/extract_stats.json (ADR-056).
+    left_out: dict[str, int] = {}
+
+
+class SamplingSummary(BaseModel):
+    """Sampling fractions of the queries the item limit cut short (ADR-058)."""
+
+    rows: list[FractionRow] = []  # groups with at least one query cut short
+    complete_groups: int = 0  # groups where every query brought all it matches
+    cut_short: int = 0  # queries stopped at the limit
+    uncounted: int = 0  # of those, without a total from the source: weight 1
+    not_examined: int = 0  # upper bound: queries overlap
+    max_weight: float = 1.0
+    kept: int = 0  # items the queries kept, before deduplication
+    effective_items: float = 0.0  # Kish's effective sample size of those items
 
 
 class MiningReport(BaseModel):
@@ -140,6 +142,7 @@ class MiningReport(BaseModel):
     term_languages: dict[str, int]  # "en", "pt", "en+pt"...; "" = no term matched
     concepts: dict[str, int]  # concept group -> unique items; "" = no concept
     evidence: EvidenceSummary | None = None
+    sampling: SamplingSummary = SamplingSummary()
     warnings: list[str] = []
 
 
@@ -201,8 +204,27 @@ def _source_summary(
     )
 
 
+def _sampling(manifest: Manifest | None) -> SamplingSummary:
+    rows = strata(manifest)
+    groups = fractions(rows)
+    cut = [s for s in rows if s.cut_short]
+    return SamplingSummary(
+        rows=[g for g in groups if g.cut_short],
+        complete_groups=sum(not g.cut_short for g in groups),
+        cut_short=len(cut),
+        uncounted=sum(not s.known for s in cut),
+        not_examined=sum(s.not_retrieved for s in cut),
+        max_weight=max((s.weight for s in rows), default=1.0),
+        kept=sum(s.kept for s in rows),
+        # Every item a query kept carries the query's weight.
+        effective_items=kish(s.weight for s in rows for _ in range(s.kept)),
+    )
+
+
 def _evidence(
-    signals: dict[str, RepoSignals], detections: list[Detection]
+    signals: dict[str, RepoSignals],
+    detections: list[Detection],
+    left_out: dict[str, int] | None = None,
 ) -> EvidenceSummary | None:
     if not signals and not detections:
         return None
@@ -216,10 +238,11 @@ def _evidence(
         repos_enriched=len(signals),
         repos_with_ci=sum(s.has_ci for s in signals.values()),
         repos_with_tests=sum(s.has_tests for s in signals.values()),
-        repos_reused=sum(getattr(s, "reused_from", None) is not None for s in signals.values()),
+        repos_reused=sum(s.reused_from is not None for s in signals.values()),
         detections=dict(sorted(Counter(d.level for d in detections).items())),
         items_with_detection=len({d.item_id for d in detections}),
         top=rows[:TOP_ENTRIES],
+        left_out=dict(left_out or {}),
     )
 
 
@@ -235,12 +258,14 @@ def build_report(
     protocol_window: tuple[str, str] | None = None,
     earlier_urls: set[str] | None = None,
     earlier_runs: int = 0,
+    extract_stats: dict[str, int] | None = None,
 ) -> MiningReport:
     """Summarize a run. `items` are the run's items, `pool` the deduplicated ones.
 
     `protocol_window` is the protocol file's (since, until), read without the
     MSRKIT_WINDOW_* overrides; `earlier_urls` are the item URLs of `earlier_runs`
-    previous runs, to count what this run added.
+    previous runs, to count what this run added; `extract_stats` is what the
+    extraction left out (extract_stats.json).
     """
     flow = build_flow(run_id, manifest, items, pool, dedupe_report, discard_file, {}, set())
     eff = manifest.effective_protocol if manifest else {}
@@ -339,7 +364,8 @@ def build_report(
         term_hits=dict(term_hits.most_common()),
         term_languages=dict(term_languages.most_common()),
         concepts=dict(concepts.most_common()),
-        evidence=_evidence(signals or {}, detections or []),
+        evidence=_evidence(signals or {}, detections or [], extract_stats),
+        sampling=_sampling(manifest),
     )
     report.warnings = _warnings(report, manifest)
     return report
@@ -375,10 +401,24 @@ def _warnings(report: MiningReport, manifest: Manifest | None) -> list[str]:
     if capped:
         limit = report.run_options.get("per_query_limit") or report.run_options.get("limit")
         how = f" (limite = {limit})" if limit else ""
+        sampling = report.sampling
+        counted = sampling.cut_short - sampling.uncounted
+        size = (
+            f" As {_n(counted)} com total informado pela fonte deixaram de examinar cerca de "
+            f"{_n(sampling.not_examined)} registros (limite superior, porque as consultas se "
+            "sobrepõem); as análises devem ponderar pelos pesos da seção Amostragem."
+            if counted > 0
+            else ""
+        )
         out.append(
             f"{capped} consultas pararam no limite de itens configurado{how}: "
-            "a coleta é uma amostra, não o total disponível nas fontes."
+            f"a coleta é uma amostra, não o total disponível nas fontes.{size}"
         )
+        if sampling.uncounted:
+            out.append(
+                f"{_n(sampling.uncounted)} consultas truncadas não têm total informado pela "
+                "fonte: a fração amostrada delas é desconhecida e seus itens ficam com peso 1."
+            )
     if report.out_of_window:
         detail = ", ".join(f"{s} {n}" for s, n in report.out_of_window.items())
         out.append(
@@ -494,11 +534,7 @@ def _places(r: MiningReport) -> list[str]:
     skipped = [s for s in r.sources if not s.executed]
     if skipped:
         lines += ["Fontes não consultadas:", ""]
-        for s in skipped:
-            if s.enabled is None:
-                lines.append(f"- **{s.name}** ({s.status}): {_cell(s.reason)}")
-            else:
-                lines.append(f"- **{s.name}**: {_cell(s.skip_reason)}")
+        lines += [f"- **{s.name}**: {_cell(s.skip_reason)}" for s in skipped]
         lines.append("")
     if r.by_source_kind:
         lines += [
@@ -616,7 +652,9 @@ def _counts(r: MiningReport) -> list[str]:
                 f"- Repositórios do GitHub enriquecidos: {_n(ev.repos_enriched)} "
                 f"(com CI: {_n(ev.repos_with_ci)}; com testes: {_n(ev.repos_with_tests)}{reused})"
             )
-        lines += [f"- Detecções: {levels}, em {_n(ev.items_with_detection)} itens", ""]
+        lines += [f"- Detecções: {levels}, em {_n(ev.items_with_detection)} itens"]
+        lines += _left_out(ev.left_out)
+        lines.append("")
         if ev.top:
             lines += [
                 f"Entradas do gazetteer com mais unidades (até {TOP_ENTRIES}; unidade = "
@@ -633,6 +671,90 @@ def _counts(r: MiningReport) -> list[str]:
     return lines
 
 
+def _left_out(stats: dict[str, int]) -> list[str]:
+    """What the extraction refused to count, one line per rule (ADR-056)."""
+    lines: list[str] = []
+    verified = stats.get("ci_hits_verified", 0)
+    rejected = stats.get("ci_hits_rejected", 0)
+    unverified = stats.get("ci_hits_unverified", 0)
+    if verified or rejected or unverified:
+        lines.append(
+            f"- Hits das consultas de CI em arquivos de workflow: {_n(verified)} com a "
+            f"ferramenta chamada num passo `run:`/`uses:`; {_n(rejected)} só a citam fora de "
+            f"passo executável (não contam); {_n(unverified)} sem o conteúdo lido (não contam)"
+        )
+    for key, text in (
+        (
+            "repos_without_artifact_item",
+            "repositórios conhecidos só por issues: ficam com as menções (N1), sem N2/N3",
+        ),
+        (
+            "self_copies",
+            "pares repositório–ferramenta em que o repositório é a própria ferramenta, uma "
+            "cópia ou um homônimo: não contam como uso",
+        ),
+        ("workflows_invalid_yaml", "arquivos de workflow que não são YAML válido"),
+        (
+            "dropped_ambiguous",
+            "menções de nomes ambíguos descartadas (sem léxico no contexto nem sinal estrutural)",
+        ),
+    ):
+        if stats.get(key):
+            lines.append(f"- {_n(stats[key])} {text}")
+    return lines
+
+
+def _sampling_section(r: MiningReport) -> list[str]:
+    s = r.sampling
+    if not s.cut_short:
+        return []
+    lines = [
+        "## Amostragem",
+        "",
+        f"{_n(s.cut_short)} consultas pararam no limite de itens e são amostras do que a fonte "
+        "tem. A fração de cada grupo é o que foi examinado (itens mantidos e descartados pelos "
+        "filtros locais) sobre o que a fonte informa; o peso de cada item é o inverso da fração "
+        "da consulta que o trouxe (`msrkit.weights`, ADR-058).",
+        "",
+        "| Fonte | Tipo | Consultas | Ano | No limite | Examinados | Disponíveis | Fração "
+        "| Não examinados (est.) |",
+        "|---|---|---|---|---:|---:|---:|---:|---:|",
+    ]
+    for g in s.rows:
+        fraction = "desconhecida" if g.fraction is None else f"{g.fraction:.1%}"
+        cut = f"{_n(g.cut_short)}/{_n(g.queries)}"
+        if g.unknown:
+            cut += f" ({_n(g.unknown)} sem total)"
+        lines.append(
+            f"| {g.source} | {g.kind or '—'} | {_cell(g.family)} | {g.year or 'janela'} | {cut} "
+            f"| {_n(g.examined)} | {'—' if g.available is None else _n(g.available)} "
+            f"| {fraction} | {_n(g.not_retrieved)} |"
+        )
+    lines += [
+        "",
+        f"- Maior peso de um item: {s.max_weight:.1f}; tamanho efetivo da amostra (Kish): "
+        f"{_n(round(s.effective_items))} de {_n(s.kept)} itens mantidos",
+        f"- Registros não examinados nas consultas com total: cerca de {_n(s.not_examined)} "
+        "(limite superior: o mesmo registro pode casar várias consultas)",
+    ]
+    if s.uncounted:
+        lines.append(
+            f"- {_n(s.uncounted)} consultas truncadas sem total da fonte: fração desconhecida, "
+            "itens com peso 1"
+        )
+    if s.complete_groups:
+        lines.append(
+            f"- {_n(s.complete_groups)} grupos de consultas vieram inteiros (fração 100%, peso 1)"
+        )
+    lines += [
+        "- Os pesos corrigem a repartição desigual entre estratos. Não corrigem a ordem em que "
+        "a fonte devolve os resultados dentro de um estrato (no GitHub, os atualizados mais "
+        "recentemente primeiro).",
+        "",
+    ]
+    return lines
+
+
 def render_markdown(report: MiningReport) -> str:
     sha = f" (`{report.protocol_sha256[:12]}`)" if report.protocol_sha256 else ""
     lines = [f"# Relatório de mineração — {report.run_id}", ""]
@@ -642,7 +764,7 @@ def render_markdown(report: MiningReport) -> str:
         "",
     ]
     lines += _summary(report) + _time(report) + _places(report)
-    lines += _searched(report) + _counts(report)
+    lines += _searched(report) + _counts(report) + _sampling_section(report)
     lines += ["## Avisos", ""]
     lines += [f"- {w}" for w in report.warnings] or ["Nenhum aviso."]
     return "\n".join([*lines, ""])

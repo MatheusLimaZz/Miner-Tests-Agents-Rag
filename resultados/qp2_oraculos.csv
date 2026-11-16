@@ -1,0 +1,16 @@
+system,rung,units,share
+all,especificado,199,0.1513
+all,derivado,42,0.0319
+all,referencia,735,0.5589
+all,pseudo-automatico,692,0.5262
+all,humano,114,0.0867
+rag,especificado,96,0.2043
+rag,derivado,23,0.0489
+rag,referencia,324,0.6894
+rag,pseudo-automatico,254,0.5404
+rag,humano,72,0.1532
+agente,especificado,149,0.2244
+agente,derivado,30,0.0452
+agente,referencia,420,0.6325
+agente,pseudo-automatico,340,0.512
+agente,humano,70,0.1054

@@ -65,7 +65,7 @@
 \renewcommand{\shorttitle}{Como a Comunidade Testa Sistemas RAG e Agentes de LLM}
 
 \begin{abstract}
-Sistemas baseados em grandes modelos de linguagem (\textit{Large Language Models} -- LLM) com geração aumentada por recuperação (\textit{Retrieval-Augmented Generation} -- RAG) e agentes autônomos chegaram à produção sem práticas consolidadas de verificação. Este artigo investiga quais ferramentas, métodos e oráculos praticantes adotam e se o engajamento comunitário reflete a adoção técnica. Conduziu-se um estudo de métodos mistos sobre 16.836 itens únicos de cinco fontes via interfaces oficiais, 6.737 repositórios enriquecidos e 13.923 detecções em 10.123 unidades, classificando ferramentas em menção (N1), uso declarado (N2) e integração contínua (N3) sem \textit{frameworks} do sistema sob teste e repositórios mantenedores. Discurso e prática externa exibem convergência moderada ($\tau_b = 0{,}54$ em N1 $\times$ N3; $0{,}56$ em N2 $\times$ N3), sem sustentar P1: Ragas lidera menções (145) e uso (330), enquanto \textit{promptfoo} (47), LangSmith (45), SWE-bench (41) e Langfuse (40) lideram em N3. LLM como juiz lidera os métodos (671); oráculos de referência (56,5\%) superam pseudoautomáticos (52,0\%), e derivados seguem raros (4,3\%). Sobre 7.339 itens elegíveis, adoção e engajamento não se associam ($\rho = -0{,}21$, sustentando P2), e agentes superam RAG no modelo ajustado ($\beta = 0{,}023$; $p = 0{,}044$).
+Sistemas baseados em grandes modelos de linguagem (\textit{Large Language Models} -- LLM) com geração aumentada por recuperação (\textit{Retrieval-Augmented Generation} -- RAG) e agentes autônomos chegaram à produção sem práticas consolidadas de verificação. Este artigo investiga quais ferramentas, métodos e oráculos praticantes adotam e se o engajamento comunitário reflete a adoção técnica. Conduziu-se um estudo de métodos mistos sobre 16.642 itens únicos de cinco fontes via interfaces oficiais, 6.868 repositórios enriquecidos e 10.875 detecções em 10.267 unidades, classificando ferramentas em menção (N1), uso declarado (N2) e integração contínua (\textit{Continuous Integration} -- CI) executável (N3) sem \textit{frameworks} do sistema sob teste e repositórios ou organizações mantenedoras. Discurso e prática externa divergem e sustentam a proposição P1 ($\tau_b = 0{,}41$ em N1 $\times$ N3; $0{,}46$ ponderado por amostragem; $0{,}49$ em N2 $\times$ N3): Ragas lidera menções (173) e uso (304), enquanto \textit{promptfoo} (29), \textit{garak} (12), DeepEval (10) e Inspect AI (9) lideram em N3. LLM como juiz lidera os métodos (692); oráculos de referência (55,9\%) superam pseudoautomáticos (52,6\%), e derivados seguem raros (3,2\%). Sobre 7.316 itens elegíveis resumidos pela média de engajamento, adoção em CI e engajamento não se associam ($\rho = -0{,}09$; $0{,}17$ ponderado, sustentando a proposição P2), e agentes superam RAG no modelo ajustado ($\beta = 0{,}025$; $p = 0{,}016$, sustentando P3).
 \end{abstract}
 
 \keywords{Teste de Sistemas Inteligentes, Geração Aumentada por Recuperação, Agentes de LLM, Literatura Cinza, Revisão Multivocal, Mineração de Repositórios de Software}
@@ -78,61 +78,77 @@ Sistemas baseados em grandes modelos de linguagem (\textit{Large Language Models
 \label{sec:intro}
 % ============================================================
 
-Sistemas baseados em grandes modelos de linguagem (\textit{Large Language Models} -- LLM) passaram a combinar geração aumentada por recuperação (\textit{Retrieval-Augmented Generation} -- RAG) com agentes que planejam e acionam ferramentas externas~\cite{lewis2020rag,gao2023ragsurvey,yehudai2025agents}. Essa arquitetura traz falhas não determinísticas, deriva de contexto e erros em múltiplas etapas, exigindo verificação contínua além de testes unitários tradicionais~\cite{zhang2022mltesting,barnett2024seven,cemri2025multiagent}.
+Sistemas baseados em grandes modelos de linguagem (\textit{Large Language Models} -- LLM) passaram a combinar geração aumentada por recuperação (\textit{Retrieval-Augmented Generation} -- RAG) com agentes que planejam e acionam ferramentas externas~\cite{lewis2020rag,gao2023ragsurvey,yehudai2025agents}.
 
-Levantamentos acadêmicos recentes sistematizam métricas, conjuntos de avaliação e taxonomias de defeitos para LLMs, RAG e agentes~\cite{chang2024survey,yu2024ragsurvey,yehudai2025agents}. Esses levantamentos, contudo, mapeiam a fronteira da pesquisa publicada e não distinguem ferramentas populares em tutoriais daquelas sustentadas em fluxos de integração contínua (\textit{Continuous Integration} -- CI) em produção~\cite{borges2018star,raulamo2017choosing}.
+Essa arquitetura híbrida introduz falhas não determinísticas, deriva de contexto e erros em múltiplas etapas. Tais riscos exigem verificação contínua além dos testes unitários tradicionais~\cite{zhang2022mltesting,barnett2024seven,cemri2025multiagent}.
 
-Para preencher essa lacuna, este artigo investiga como a comunidade de engenharia de software testa sistemas RAG e agentes na prática. Adota-se uma revisão multivocal que combina literatura cinza e mineração de repositórios~\cite{garousi2019guidelines,kalliamvakou2014promises}, estruturada em cinco questões de pesquisa (QPs) sobre ferramentas, métodos, oráculos, engajamento, falhas e transferência entre paradigmas.
+Levantamentos acadêmicos recentes sistematizam métricas, conjuntos de avaliação e taxonomias de defeitos para LLMs, sistemas RAG e agentes~\cite{chang2024survey,yu2024ragsurvey,yehudai2025agents}.
 
-Em relação à coleta anterior, o \textit{corpus} foi ampliado para 16.836 itens únicos de cinco fontes coletadas via interfaces de programação de aplicações (\textit{Application Programming Interfaces} -- APIs) oficiais, com 6.737 repositórios enriquecidos e 13.923 detecções. A divisão em três níveis de evidência preserva o contraste entre discurso e CI, mantendo ferramentas de teste separadas do sistema sob teste (\textit{System Under Test} -- SUT).
+Esses levantamentos, contudo, mapeiam a fronteira da pesquisa publicada. Eles não distinguem ferramentas populares em tutoriais daquelas sustentadas em fluxos de integração contínua (\textit{Continuous Integration} -- CI) em produção~\cite{borges2018star,raulamo2017choosing}.
 
-As contribuições incluem um \textit{corpus} rastreável de 16.836 itens em 10.123 unidades, uma taxonomia empírica de 33 ferramentas e 10 métodos alinhados à escada de oráculos de Barr et al.~\cite{barr2015oracle}, o cálculo completo de engajamento sobre 7.339 itens elegíveis com separação dos repositórios mantenedores, e a revisão de teses iniciais sobre rastreamento e oráculos. Apenas a codificação qualitativa manual aguarda conclusão.
+Para preencher essa lacuna, este artigo investiga como a comunidade de engenharia de software testa sistemas RAG e agentes na prática. Adota-se uma revisão multivocal que combina literatura cinza e mineração de repositórios~\cite{garousi2019guidelines,kalliamvakou2014promises}.
+
+A investigação estrutura-se em cinco questões de pesquisa (QPs) que cobrem ferramentas, métodos e oráculos. Avaliam-se ainda a relação com o engajamento, as falhas relatadas e a transferência de práticas entre paradigmas.
+
+Em relação à coleta anterior, o \textit{corpus} reúne 16.642 itens únicos de cinco fontes coletadas via interfaces de programação de aplicações (\textit{Application Programming Interfaces} -- APIs) oficiais. O conjunto inclui 6.868 repositórios enriquecidos e 10.875 detecções.
+
+Esse volume decorre da filtragem de ruído em \textit{issues} e da análise estrutural executável de \textit{workflows} de CI. A divisão em três níveis preserva o contraste entre discurso e CI, separando ferramentas de teste do sistema sob teste (\textit{System Under Test} -- SUT).
+
+As contribuições incluem um \textit{corpus} rastreável de 16.642 itens em 10.267 unidades e uma taxonomia empírica de 33 ferramentas e 10 métodos alinhados à escada de oráculos de Barr et al.~\cite{barr2015oracle}.
+
+Inclui-se também o cálculo completo de engajamento sobre 7.316 itens elegíveis com pesos amostrais e isolamento de repositórios e organizações mantenedoras, sustentando as proposições P1, P2 e P3. Apenas a validação de precisão e a codificação qualitativa manual aguardam conclusão.
 
 % ============================================================
 \section{Fundamentação}
 \label{sec:fundamentacao}
 % ============================================================
 
-Esta seção apresenta os conceitos que fundamentam a investigação empírica do estudo. A Seção~\ref{sec:fund-rag-agentes} caracteriza as arquiteturas de sistemas RAG e de agentes baseados em LLMs quanto às suas superfícies de falha. Em seguida, a Seção~\ref{sec:fund-oraculo} discute o problema do oráculo em saídas não determinísticas, e a Seção~\ref{sec:fund-cinza} distingue popularidade discursiva de adoção técnica em repositórios.
+Esta seção apresenta os conceitos que fundamentam a investigação empírica do estudo. A Seção~\ref{sec:fund-rag-agentes} caracteriza as arquiteturas de sistemas RAG e de agentes baseados em LLMs quanto às suas superfícies de falha.
+
+Em seguida, a Seção~\ref{sec:fund-oraculo} discute o problema do oráculo em saídas não determinísticas. Por fim, a Seção~\ref{sec:fund-cinza} distingue popularidade discursiva de adoção técnica em repositórios.
 
 \subsection{Sistemas RAG e Agentes de LLM}
 \label{sec:fund-rag-agentes}
 
-Um sistema RAG acopla um módulo de recuperação de informação (\textit{Information Retrieval} -- IR) a um modelo gerador para ancorar respostas em documentos externos~\cite{lewis2020rag,gao2023ragsurvey}. As falhas ocorrem na segmentação, na busca semântica, na ordenação de passagens ou na síntese infiel ao contexto recuperado~\cite{barnett2024seven,yu2024ragsurvey}.
+Um sistema RAG acopla um módulo de recuperação de informação (\textit{Information Retrieval} -- IR) a um modelo gerador para ancorar respostas em documentos externos~\cite{lewis2020rag,gao2023ragsurvey}. As falhas ocorrem na segmentação, na busca semântica, na ordenação ou na síntese infiel ao contexto recuperado~\cite{barnett2024seven,yu2024ragsurvey}.
 
-Agentes baseados em LLMs estendem esse ciclo ao manter estado, decompor objetivos, invocar APIs e avaliar resultados intermediários em laços iterativos~\cite{yehudai2025agents,liu2024agentbench}. A execução em múltiplas voltas introduz falhas de planejamento, chamadas inválidas de ferramentas e perda de alinhamento entre agentes~\cite{cemri2025multiagent,yao2024taubench}.
+Agentes baseados em LLMs estendem esse ciclo ao manter estado, decompor objetivos, invocar APIs e avaliar resultados em laços iterativos~\cite{yehudai2025agents,liu2024agentbench}. A execução em múltiplas voltas introduz falhas de planejamento, chamadas inválidas e perda de alinhamento entre agentes~\cite{cemri2025multiagent,yao2024taubench}.
 
-A composição híbrida, na qual agentes consultam bases vetoriais como ferramentas de busca, torna a fronteira de teste permeável entre os dois paradigmas~\cite{gao2023ragsurvey,yehudai2025agents}. Essa convergência arquitetural motiva avaliar em conjunto ferramentas de avaliação de recuperação, qualidade textual e trajetória de decisão~\cite{es2024ragas,jimenez2024swebench}.
+A composição híbrida, na qual agentes consultam bases vetoriais como ferramentas de busca, torna a fronteira de teste permeável entre os paradigmas~\cite{gao2023ragsurvey,yehudai2025agents}. Essa convergência motiva avaliar em conjunto recuperação, qualidade textual e trajetória de decisão~\cite{es2024ragas,jimenez2024swebench}.
 
 \subsection{O Problema do Oráculo em Sistemas Baseados em LLM}
 \label{sec:fund-oraculo}
 
-Na definição clássica de Barr et al.~\cite{barr2015oracle}, um oráculo de teste distingue comportamentos aceitáveis de falhos para cada entrada executada. Em sistemas tradicionais, asserções determinísticas verificam contratos exatos de saída, mas respostas em linguagem natural admitem múltiplas formulações corretas~\cite{zhang2022mltesting,chang2024survey}.
+Na definição clássica de Barr et al.~\cite{barr2015oracle}, um oráculo de teste distingue comportamentos aceitáveis de falhos para cada entrada. Em sistemas tradicionais, asserções determinísticas verificam contratos exatos, mas respostas em linguagem natural admitem múltiplas formulações corretas~\cite{zhang2022mltesting,chang2024survey}.
 
-Para contornar saídas abertas, métodos recentes empregam modelos avaliadores como juízes automáticos de coerência, fidelidade e utilidade~\cite{zheng2023judging,es2024ragas}. Essa alternativa sofre de vieses de posição, verbosidade e autoconsistência, exigindo calibração contra julgamento humano ou referências curadas~\cite{zheng2023judging,chang2024survey}.
+Para contornar saídas abertas, métodos recentes empregam modelos avaliadores como juízes automáticos de coerência, fidelidade e utilidade~\cite{zheng2023judging,es2024ragas}. Essa alternativa sofre de vieses de posição, verbosidade e autoconsistência, exigindo calibração com julgamento humano ou referências~\cite{zheng2023judging,chang2024survey}.
 
-Métodos derivados, como testes metamórficos e baseados em propriedades, dispensam respostas exatas ao verificar invariantes entre perturbações controladas da entrada~\cite{barr2015oracle,zhang2022mltesting}. Neste estudo, cada método extraído é mapeado em cinco degraus de automação do oráculo: especificado, referência, pseudoautomático, derivado e humano~\cite{barr2015oracle,zheng2023judging}.
+Métodos derivados, como testes metamórficos e baseados em propriedades, dispensam respostas exatas ao verificar invariantes entre perturbações controladas da entrada~\cite{barr2015oracle,zhang2022mltesting}.
+
+Neste estudo, cada método extraído é mapeado em cinco degraus de automação do oráculo: especificado, referência, pseudoautomático, derivado e humano~\cite{barr2015oracle,zheng2023judging}.
 
 \subsection{Literatura Cinza e Popularidade versus Adoção}
 \label{sec:fund-cinza}
 
 Revisões multivocais combinam artigos revisados por pares e literatura cinza produzida por praticantes em repositórios, fóruns e registros técnicos~\cite{garousi2019guidelines,cruzes2011thematic}. Essa triangulação captura ferramentas emergentes que ainda não aparecem em conferências acadêmicas~\cite{garousi2019guidelines,raulamo2017choosing}.
 
-Contudo, a visibilidade de uma ferramenta em discussões ou estrelas de repositório não garante seu uso efetivo em projetos reais~\cite{borges2018star,kalliamvakou2014promises}. Repositórios de exemplo, \textit{forks} e guias introdutórios inflam contagens brutas caso não haja separação entre menção superficial e configuração executável~\cite{kalliamvakou2014promises,ralph2020standards}.
+Contudo, a visibilidade de uma ferramenta em discussões ou estrelas não garante uso efetivo em projetos reais~\cite{borges2018star,kalliamvakou2014promises}. Repositórios de exemplo, \textit{forks} e guias inflam contagens sem separar menção de configuração executável~\cite{kalliamvakou2014promises,ralph2020standards}.
 
-Por essa razão, a análise adota o princípio metodológico aplicado por Raulamo-Jurvanen et al.~\cite{raulamo2017choosing} e distingue três níveis graduais de evidência. O contraste entre debate discursivo e configuração verificável em CI testa empiricamente até que ponto popularidade reflete adoção sustentada~\cite{borges2018star,kalliamvakou2014promises}.
+Por essa razão, a análise adota o princípio de Raulamo-Jurvanen et al.~\cite{raulamo2017choosing} e distingue três níveis graduais de evidência. O contraste entre debate discursivo e configuração verificável em CI testa até que ponto popularidade reflete adoção sustentada~\cite{borges2018star,kalliamvakou2014promises}.
 
 % ============================================================
 \section{Método}
 \label{sec:metodo}
 % ============================================================
 
-O desenho empírico segue um protocolo pré-registrado de métodos mistos que integra literatura cinza e mineração de repositórios~\cite{msrkit2027}. A Seção~\ref{sec:met-qps} define as questões de pesquisa e proposições, enquanto a Seção~\ref{sec:met-coleta} descreve a coleta automatizada estruturada pelo fluxo PRISMA 2020~\cite{page2021prisma}. Na sequência, as Seções~\ref{sec:met-niveis},~\ref{sec:met-descoberta} e~\ref{sec:met-estatistica} detalham os três níveis de evidência, a descoberta aberta de termos e o plano de análise estatística.
+O desenho empírico segue um protocolo pré-registrado de métodos mistos que integra literatura cinza e mineração de repositórios~\cite{msrkit2027}. A Seção~\ref{sec:met-qps} define as questões de pesquisa e proposições do estudo.
+
+A Seção~\ref{sec:met-coleta} descreve a coleta automatizada pelo fluxo \textit{Preferred Reporting Items for Systematic Reviews and Meta-Analyses} (PRISMA) 2020~\cite{page2021prisma}. Em seguida, as Seções~\ref{sec:met-niveis},~\ref{sec:met-descoberta} e~\ref{sec:met-estatistica} detalham os níveis de evidência, a descoberta aberta e o plano estatístico.
 
 \subsection{Questões de Pesquisa e Proposições}
 \label{sec:met-qps}
 
-O estudo adota desenho de métodos mistos para responder a cinco questões de pesquisa definidas no protocolo pré-registrado no repositório do instrumento de coleta~\cite{msrkit2027,ralph2020standards}. Cada questão articula evidências quantitativas de mineração com categorias temáticas para triangulação~\cite{cruzes2011thematic,garousi2019guidelines}.
+O estudo adota métodos mistos para responder a cinco questões de pesquisa definidas no protocolo pré-registrado do instrumento de coleta~\cite{msrkit2027,ralph2020standards}. Cada questão articula evidências quantitativas de mineração com categorias temáticas para triangulação~\cite{cruzes2011thematic,garousi2019guidelines}.
 
 A Tabela~\ref{tab:qps} resume as cinco questões de pesquisa, os construtos operacionais e as fontes de evidência associadas. Todas as análises descritivas e testes não paramétricos seguem o protocolo publicado junto ao conjunto de dados~\cite{msrkit2027,page2021prisma}.
 
@@ -148,192 +164,210 @@ A Tabela~\ref{tab:qps} resume as cinco questões de pesquisa, os construtos oper
 \midrule
 QP1 & Ferramentas usadas e diferença entre menção (N1), uso (N2) e CI (N3) & Matriz ferramenta $\times$ nível; correlação $\tau_b$ de Kendall \\
 QP2 & Métodos de teste e degraus de oráculo empregados na prática & Contagens de 10 métodos e 5 degraus; coocorrência \textit{Lift}/Jaccard \\
-QP3 & Relação entre práticas de teste e métricas de engajamento & Kruskal--Wallis, Dunn--Holm, Spearman, Cliff e OLS (7.339 itens) \\
+QP3 & Relação entre práticas de teste e métricas de engajamento & Kruskal--Wallis, Dunn--Holm, Spearman, Cliff e mínimos quadrados ordinários (OLS) (7.316 itens) \\
 QP4 & Falhas relatadas pelos praticantes na depuração e avaliação & Codificação temática na amostra triada (pendente) \\
 QP5 & Sobreposição de ferramentas e métodos entre RAG e agentes & Índice de Jaccard e razão de transferência \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-As questões quantitativas avaliam proposições orientadoras do protocolo. A proposição P1 postula divergência entre menções e adoção externa em CI ($\tau_b < 0{,}5$)~\cite{kendall1938,borges2018star}. Já P2 prevê associação fraca entre adoção e engajamento ($\rho < 0{,}4$)~\cite{kalliamvakou2014promises}, P3 contrasta agentes e RAG em 2025--2026, e a hipótese H2 avalia atomicidade de oráculos na QP2 após codificação manual.
+As questões quantitativas avaliam proposições orientadoras do protocolo. A proposição P1 postula divergência entre menções em N1 e adoção externa em CI no nível N3 ($\tau_b < 0{,}5$)~\cite{kendall1938,borges2018star}.
+
+A proposição P2 prevê associação fraca entre adoção e engajamento ($|\rho| < 0{,}4$)~\cite{kalliamvakou2014promises}. Já P3 contrasta agentes e RAG em 2025--2026, e a hipótese H2 avalia atomicidade de oráculos na QP2 após codificação manual.
 
 \subsection{Coleta de Dados e Protocolo PRISMA}
 \label{sec:met-coleta}
 
-A coleta seguiu as diretrizes de fluxo do protocolo PRISMA (\textit{Preferred Reporting Items for Systematic Reviews and Meta-Analyses})~\cite{page2021prisma}. Todas as requisições foram executadas em 06/11/2026 (01h19--03h07 em Tempo Universal Coordenado -- UTC) na execução identificada por \texttt{2026-11-06T01-19-19Z-015e} pelo minerador \textit{MSR-Kit}~\cite{msrkit2027}.
+A coleta seguiu as diretrizes de fluxo do protocolo PRISMA 2020~\cite{page2021prisma}. Todas as requisições ocorreram em 16/11/2026 (07h29--09h30, Tempo Universal Coordenado -- UTC) na execução \texttt{2026-11-16T07-29-05Z-ba7b} pelo minerador \textit{MSR-Kit}~\cite{msrkit2027} (revisão \texttt{22b444e}, protocolo \texttt{fcb9c17a3f60}).
 
-O acesso respeitou exclusivamente APIs oficiais e limites explícitos de taxa, abrangendo a janela de janeiro de 2023 a agosto de 2026~\cite{msrkit2027,ralph2020standards}. Cinco fontes integraram a execução: GitHub\footnote{\url{https://github.com}}, Hacker News\footnote{\url{https://news.ycombinator.com}}, Stack Exchange\footnote{\url{https://stackexchange.com}}, Hugging Face\footnote{\url{https://huggingface.co}} e dev.to\footnote{\url{https://dev.to}}.
+O acesso respeitou exclusivamente APIs oficiais e limites explícitos de taxa, abrangendo a janela de janeiro de 2023 a agosto de 2026~\cite{msrkit2027,ralph2020standards}. Esse recorte temporal permite observar a evolução recente das práticas de teste.
 
-Fontes adicionais previstas em versões anteriores, como Reddit\footnote{\url{https://www.reddit.com}} e \textit{feeds} públicos, não compuseram esta captura, enquanto Bluesky\footnote{\url{https://bsky.app}}, Discord\footnote{\url{https://discord.com}}, LinkedIn\footnote{\url{https://www.linkedin.com}} e X\footnote{\url{https://x.com}} permaneceram indisponíveis ou restritos por política de acesso~\cite{msrkit2027}. Foram executadas 565 consultas de 20 termos em inglês e 17 grupos de consultas literais no GitHub.
+Cinco fontes integraram a coleta: GitHub\footnote{\url{https://github.com}}, Hacker News\footnote{\url{https://news.ycombinator.com}}, Stack Exchange\footnote{\url{https://stackexchange.com}}, Hugging Face\footnote{\url{https://huggingface.co}} e dev.to\footnote{\url{https://dev.to}}. Outras fontes previstas em versões anteriores, como Reddit\footnote{\url{https://www.reddit.com}}, não compuseram esta captura.
 
-Com exceção do dev.to, varrido em censo completo, aplicou-se estratificação anual com limite de 100 resultados por consulta~\cite{msrkit2027}. Ao todo, 2.771 requisições \textit{Hypertext Transfer Protocol} (HTTP) identificaram 78.308 registros brutos, dos quais 58.716 foram descartados no filtro lexical e 2.756 na remoção de duplicatas de \textit{Uniform Resource Locator} (URL), conteúdo e similaridade.
+Plataformas como Bluesky\footnote{\url{https://bsky.app}}, Discord\footnote{\url{https://discord.com}}, LinkedIn\footnote{\url{https://www.linkedin.com}} e X\footnote{\url{https://x.com}} permaneceram indisponíveis ou restritas por política de acesso~\cite{msrkit2027}, assim como \textit{feeds} públicos adicionais.
 
-A Tabela~\ref{tab:coleta} detalha o volume por plataforma nos 16.836 itens únicos preservados. O repositório de código responde por 79,8\% do \textit{corpus}, embora 122 consultas tenham atingido o teto de 100 itens por estrato, concentrando-se em trechos de código (4.437), \textit{issues} (7.339) e metadados de repositórios (1.666).
+Foram executadas 565 consultas de 20 termos em inglês (incluindo ``LLM test oracle'' no lugar de ``oracle'') e 17 grupos literais no GitHub. Aplicou-se filtragem automática de contas de robôs e rótulos de ruído (\texttt{dependencies} e \texttt{requirement}).
+
+Com exceção do dev.to, varrido em censo completo, aplicou-se estratificação anual com limite de 100 resultados por consulta~\cite{msrkit2027}. Ao todo, 3.003 requisições \textit{Hypertext Transfer Protocol} (HTTP) identificaram 79.645 registros brutos.
+
+Desse total, 60.418 registros foram descartados nos filtros locais (58.713 sem correspondência no dev.to, 1.699 de robôs e 6 por rótulo no GitHub). Outros 2.585 saíram na remoção de duplicatas de \textit{Uniform Resource Locator} (URL), conteúdo e similaridade.
+
+A Tabela~\ref{tab:coleta} detalha o volume por plataforma nos 16.642 itens únicos preservados. O repositório de código responde por 79,5\% do \textit{corpus}, e 113 consultas atingiram o teto de 100 itens por estrato.
+
+Esse truncamento deixou até 321.072 registros potenciais não examinados (limite superior com sobreposição entre consultas). Para compensá-lo, registraram-se os totais por consulta visando aos pesos de Horvitz--Thompson (tamanho efetivo de Kish $N_{\text{ef}} = 1.634$; peso máximo 487,7).
 
 \begin{table*}[tb]
 \centering
-\caption{Fontes coletadas, volume bruto, consultas e itens únicos na execução 015e.}
+\caption{Fontes coletadas, volume bruto, consultas e itens únicos na execução ba7b.}
 \label{tab:coleta}
 \small
 \begin{tabular}{@{}lrrrrl@{}}
 \toprule
 \textbf{Fonte} & \textbf{Consultas} & \textbf{Requisições} & \textbf{Bruto} & \textbf{Únicos} & \textbf{Observações da captura} \\
 \midrule
-GitHub & 384 & 1.017 & 15.053 & 13.442 & 7.339 \textit{issues}, 4.437 código, 1.666 repositórios; 104 truncadas \\
-Hacker News & 80 & 160 & 2.455 & 1.690 & Discussões técnicas e lançamentos; 13 truncadas \\
+GitHub & 384 & 1.208 & 14.681 & 13.225 & 7.054 \textit{issues}, 4.480 código, 1.691 repositórios; 95 truncadas \\
+Hacker News & 80 & 160 & 2.459 & 1.710 & Discussões técnicas e lançamentos; 13 truncadas \\
 Stack Exchange & 80 & 885 & 996 & 813 & Perguntas e respostas técnicas; 3 truncadas \\
-Hugging Face & 20 & 59 & 580 & 568 & Fóruns e modelos; 2 truncadas; 38 fora da janela \\
-dev.to & 1 & 650 & 508 & 323 & Censo único com 58.716 itens sem correspondência \\
+Hugging Face & 20 & 59 & 581 & 569 & Fóruns e modelos; 2 truncadas; 42 fora da janela \\
+dev.to & 1 & 691 & 510 & 325 & Censo único com 58.713 itens sem correspondência \\
 \midrule
-\textbf{Total} & \textbf{565} & \textbf{2.771} & \textbf{19.592*} & \textbf{16.836} & \textbf{122 consultas truncadas; 2.756 duplicatas removidas} \\
+\textbf{Total} & \textbf{565} & \textbf{3.003} & \textbf{19.227*} & \textbf{16.642} & \textbf{113 consultas truncadas; 2.585 duplicatas removidas} \\
 \bottomrule
 \end{tabular}
-\par\vspace{2pt}{\footnotesize *Após descarte de 58.716 registros do dev.to no filtro de termos sobre os 78.308 itens identificados inicialmente.\par}
+\par\vspace{2pt}{\footnotesize *Após descarte de 60.418 registros nos filtros locais (58.713 no dev.to e 1.705 \textit{issues} de robôs/rótulos no GitHub) sobre 79.645 identificados.\par}
 \end{table*}
 
 \subsection{Enriquecimento e Níveis de Evidência}
 \label{sec:met-niveis}
 
-Os itens vinculados ao GitHub acionaram o enriquecimento automático de repositórios para coletar sinais estruturais de verificação~\cite{kalliamvakou2014promises,msrkit2027}. Ao todo, 6.737 repositórios distintos foram enriquecidos, revelando 4.366 projetos com diretórios de CI e 5.350 com sinais ou suítes explícitas de testes.
+Os itens vinculados ao GitHub acionaram o enriquecimento automático de repositórios para coletar sinais estruturais de verificação~\cite{kalliamvakou2014promises,msrkit2027}. Ao todo, 6.868 repositórios distintos foram enriquecidos sem erros.
 
-Um catálogo estruturado definiu 51 entradas iniciais: 33 ferramentas de teste, 8 \textit{frameworks} de orquestração classificados como SUT e 10 métodos de teste~\cite{msrkit2027}. O alinhamento lexical consolidou 13.923 detecções brutas (10.748 de ferramentas e 3.175 de métodos) por 8.265 itens em 10.123 unidades, das quais 6.729 vinculam-se ao GitHub.
+Desses, 5.586 foram reaproveitados de execuções anteriores com verificação de integridade dos arquivos. O conjunto revelou 4.601 projetos com diretórios de CI e 5.559 com sinais ou suítes explícitas de testes.
 
-Para evitar autoenviesamento na contagem, o roteiro analítico remove ocorrências nos repositórios mantenedores das próprias ferramentas, retendo apenas adoção externa (\textit{N3 externo})~\cite{kalliamvakou2014promises,msrkit2027}. Cada ocorrência restante recebe classificação em três níveis graduais de evidência~\cite{raulamo2017choosing,borges2018star}.
+Um catálogo estruturado definiu 51 entradas iniciais: 33 ferramentas de teste, 8 \textit{frameworks} de orquestração classificados como SUT e 10 métodos de teste~\cite{msrkit2027}. O alinhamento lexical consolidou 10.875 detecções (8.094 de ferramentas e 2.781 de métodos).
 
-O nível N1 (\textbf{menção}) registra citação discursiva sem vínculo a código executável, e N2 (\textbf{uso declarado}) captura dependências ou importações. Já N3 (\textbf{adoção em CI}) exige presença do identificador em fluxos de automação contínua externos ao projeto mantenedor.
+Essas detecções distribuem-se por 6.454 itens em 10.267 unidades, das quais 6.850 vinculam-se ao GitHub. Foram descartadas 1.460 correspondências em CI fora de passos executáveis (\texttt{run:} ou \texttt{uses:}), 265 menções ambíguas sem contexto avaliativo e 137 cópias nominais do próprio projeto.
+
+Para evitar autoenviesamento, sinais estruturais (N2/N3) aplicam-se apenas a artefatos de repositório ou código, excluindo 2.190 repositórios sem item correspondente no \textit{corpus}~\cite{kalliamvakou2014promises,msrkit2027}.
+
+O roteiro analítico também remove ocorrências nos repositórios e organizações mantenedoras das próprias ferramentas (\textit{self}), retendo apenas adoção externa (\textit{N3 externo}). Cada ocorrência restante recebe classificação em três níveis graduais de evidência~\cite{raulamo2017choosing,borges2018star}.
+
+O nível N1 (\textbf{menção}) registra citação discursiva sem código executável, e N2 (\textbf{uso declarado}) captura dependências ou citações isoladas em CI. Já N3 (\textbf{adoção em CI}) exige passo executável em \textit{workflows} sustentados (mínimo de dois contribuidores e dois meses ativos) externos à mantenedora.
 
 \subsection{Descoberta Aberta e Saturação}
 \label{sec:met-descoberta}
 
-Para mitigar o viés de catálogo fechado, o módulo de descoberta aplicou representação por frequência do termo pelo inverso da frequência nos documentos (\textit{Term Frequency--Inverse Document Frequency} -- TF-IDF) e Alocação Latente de Dirichlet (\textit{Latent Dirichlet Allocation} -- LDA) sobre o \textit{corpus}~\cite{blei2003lda,cruzes2011thematic}. Documentos muito curtos foram excluídos antes da vetorização, restando 10.438 textos e 188.212 termos.
+Para mitigar o viés de catálogo fechado, aplicaram-se frequência do termo pelo inverso da frequência nos documentos (\textit{Term Frequency--Inverse Document Frequency} -- TF-IDF) e Alocação Latente de Dirichlet (\textit{Latent Dirichlet Allocation} -- LDA)~\cite{blei2003lda,cruzes2011thematic}.
 
-A triagem gerou 114 termos candidatos para inspeção manual, mantendo zero promoções automáticas para preservar a validade do catálogo~\cite{msrkit2027}. Paralelamente, ordenou-se o \textit{corpus} em 674 lotes cronológicos para avaliar o ponto de saturação da taxonomia de códigos~\cite{cruzes2011thematic,ralph2020standards}.
+Documentos muito curtos (6.446) foram excluídos antes da vetorização, restando 10.196 textos válidos e 158.503 termos para modelagem temática.
+
+A triagem gerou 107 termos candidatos para inspeção manual, mantendo zero promoções automáticas para preservar a validade do catálogo~\cite{msrkit2027}. Paralelamente, ordenou-se o \textit{corpus} em 666 lotes cronológicos para avaliar o ponto de saturação da taxonomia de códigos~\cite{cruzes2011thematic,ralph2020standards}.
 
 \subsection{Plano Estatístico e Elegibilidade de Engajamento}
 \label{sec:met-estatistica}
 
-A concordância entre rankings nos níveis N1, N2 e N3 externo usa o coeficiente $\tau_b$ de Kendall com intervalos de confiança de 95\% via 10.000 reamostragens \textit{bootstrap}~\cite{kendall1938,efron1993bootstrap}. Associações entre pares empregam o índice de Jaccard e a razão de elevação (\textit{Lift}).
+A concordância entre os níveis N1, N2 e N3 externo usa o coeficiente $\tau_b$ de Kendall com intervalos de confiança (IC) de 95\% via 10.000 reamostragens \textit{bootstrap}~\cite{kendall1938,efron1993bootstrap}. Verifica-se P1 na amostra e nos escores ponderados, enquanto pares usam Jaccard e razão de elevação (\textit{Lift}).
 
-Na QP3, aplica-se um filtro de elegibilidade sobre os 16.836 itens para isolar discussões maduras em plataformas com suporte a reações. Excluem-se 6.103 registros sem métrica de reação (código e repositórios), 2.505 \textit{issues} com padrão de dor ou falha, 839 itens recentes (menores de três meses) e 50 postagens automatizadas, restando 7.339 itens válidos~\cite{msrkit2027,kalliamvakou2014promises}.
+Na QP3, aplica-se um filtro de elegibilidade sobre os 16.642 itens para isolar discussões maduras em plataformas com suporte a reações~\cite{msrkit2027,kalliamvakou2014promises}.
 
-Sobre os 7.339 itens válidos, calcula-se o engajamento $E \in [0,1]$ por posto percentual intraestrato. Ferramentas e métodos com $n \ge 10$ são testados via Kruskal--Wallis, Dunn--Holm, Spearman com adoção externa, binomial negativa, delta de Cliff e mínimos quadrados ordinários (\textit{Ordinary Least Squares} -- OLS) com erros robustos~\cite{kruskal1952,dunn1964,holm1979,cliff1993dominance}.
+Excluem-se 6.171 registros sem métrica de reação (código e repositórios), 2.518 \textit{issues} com padrão de dor ou falha, 544 itens com menos de três meses e 93 postagens automatizadas pelo título, restando 7.316 itens válidos.
 
-Apenas a triagem manual em duas trilhas e a dupla codificação dos 16.836 itens permanecem pendentes. Essa etapa futura responderá à QP4, verificará a hipótese H2 e resolverá a QP5 com concordância kappa de Cohen~\cite{cohen1960kappa,landis1977measurement}.
+Sobre os 7.316 itens válidos, calcula-se o engajamento $E \in [0,1]$ por posto percentual médio intraestrato (fonte $\times$ tipo). Como 60,4\% dos itens empatam no piso do estrato com mediana constante, adota-se a média de $E$.
+
+Essa métrica equivale à probabilidade de superioridade avaliada no teste de Kruskal--Wallis~\cite{kruskal1952}. Como análises de sensibilidade, avaliam-se a mediana, o corte dos 10\% superiores e os estratos não truncados.
+
+Ferramentas e métodos ($n \ge 10$) são avaliados por Kruskal--Wallis, Dunn--Holm, Spearman, binomial negativa, delta de Cliff e mínimos quadrados ordinários (\textit{Ordinary Least Squares} -- OLS) com erros \textit{Heteroskedasticity-Consistent} (HC3)~\cite{kruskal1952,dunn1964,holm1979,cliff1993dominance}.
+
+Apenas a validação da amostra de precisão (200 detecções), a triagem manual em duas trilhas e a dupla codificação dos 16.642 itens permanecem pendentes. Essa etapa responderá à QP4, verificará a hipótese H2 e resolverá a QP5 com concordância kappa de Cohen~\cite{cohen1960kappa,landis1977measurement}.
 
 % ============================================================
 \section{Resultados}
 \label{sec:resultados}
 % ============================================================
 
-Esta seção apresenta os resultados empíricos sobre os 16.836 itens e as 10.123 unidades analíticas da coleta oficial. A Seção~\ref{sec:res-qp1} examina a adoção externa das 33 ferramentas de teste nos três níveis de evidência (QP1), a Seção~\ref{sec:res-qp2} analisa os dez métodos e a escada de oráculos (QP2), e a Seção~\ref{sec:res-descoberta} reporta a descoberta aberta e a saturação do catálogo. Em seguida, a Seção~\ref{sec:res-qp3} avalia a relação entre engajamento e adoção (QP3), e a Seção~\ref{sec:res-qp4-qp5} sintetiza o estado da triagem qualitativa e a sobreposição entre paradigmas (QP4 e QP5).
+Esta seção apresenta os resultados empíricos sobre os 16.642 itens e as 10.267 unidades analíticas da coleta oficial. A Seção~\ref{sec:res-qp1} examina a adoção externa das 33 ferramentas de teste nos três níveis de evidência (QP1).
+
+A Seção~\ref{sec:res-qp2} analisa os dez métodos e a escada de oráculos (QP2), e a Seção~\ref{sec:res-descoberta} reporta a descoberta aberta e a saturação. Em seguida, a Seção~\ref{sec:res-qp3} avalia o engajamento (QP3), e a Seção~\ref{sec:res-qp4-qp5} sintetiza o estado de QP4 e QP5.
 
 \subsection{QP1: Ferramentas de Teste e Níveis de Evidência}
 \label{sec:res-qp1}
 
-Após remover 27 ocorrências em repositórios mantenedores (\textit{self}) de 27 ferramentas, as 33 ferramentas de teste somam 3.538 ocorrências externas: 855 em N1, 2.018 em N2 e 665 em N3 externo distribuídas por 32 ferramentas. Os 8 \textit{frameworks} de SUT ocorrem em 29\% das unidades, liderados por LangChain (1.081) e LangGraph (635), fora dos rankings principais.
+Após remover 88 ocorrências em repositórios e organizações mantenedoras (\textit{self}), as 33 ferramentas de teste somam 2.550 ocorrências externas em 1.761 unidades. São 966 em N1, 1.467 em N2 e 117 em N3 externo ao longo de 25 ferramentas (99 unidades com ao menos uma ferramenta em N3).
 
-A Tabela~\ref{tab:qp1} lista as 24 ferramentas líderes em adoção externa contínua (N3), a síntese das nove restantes e os totais por nível. A liderança em N3 pertence ao \textit{promptfoo} (47)~\cite{promptfoo}, seguido por LangSmith (45), SWE-bench (41)~\cite{jimenez2024swebench}, Langfuse (40) e lm-evaluation-harness (39).
+Os 8 \textit{frameworks} de SUT ocorrem em 34\% das unidades com ferramenta, liderados por LangChain (894) e LangGraph (547), mantidos fora dos rankings principais.
+
+A Tabela~\ref{tab:qp1} lista as 24 ferramentas líderes em adoção contínua (N3), a síntese das nove restantes e os totais por nível. A liderança em N3 pertence ao \textit{promptfoo} (29)~\cite{promptfoo}, seguido por \textit{garak} (12)~\cite{derczynski2024garak}, DeepEval (10)~\cite{deepeval}, Inspect AI (9) e Ragas (6)~\cite{es2024ragas}.
+
+O levantamento abrange \textit{benchmarks} de agentes e recuperação -- como o \textit{Berkeley Function Calling Leaderboard} (BFCL), o \textit{Massive Text Embedding Benchmark} (MTEB) e o \textit{Benchmarking IR} (BEIR) -- e ferramentas de segurança como o \textit{Python Risk Identification Toolkit} (PyRIT).
 
 \begin{table*}[tb]
 \centering
-\caption{Distribuição externa das 33 ferramentas de teste nos três níveis de evidência (excluídos \textit{self} e 8 \textit{frameworks} de SUT).}
+\caption{Distribuição externa das 33 ferramentas de teste nos três níveis de evidência (excluídos \textit{self} organizacional e 8 \textit{frameworks} de SUT).}
 \label{tab:qp1}
 \footnotesize
 \begin{tabular}{@{}rllrrrrrr@{}}
 \toprule
 \textbf{\#} & \textbf{Ferramenta} & \textbf{Família} & \textbf{N3 (CI)} & \textbf{N2 (Uso)} & \textbf{N1 (Menção)} & \textbf{Total} & \textbf{RAG} & \textbf{Agente} \\
 \midrule
-1 & promptfoo~\cite{promptfoo} & avaliação LLM/RAG & 47 & 125 & 53 & 225 & 26 & 48 \\
-2 & LangSmith & rastreamento & 45 & 266 & 109 & 420 & 130 & 156 \\
-3 & SWE-bench~\cite{jimenez2024swebench} & agentes & 41 & 38 & 69 & 148 & 35 & 83 \\
-4 & Langfuse & rastreamento & 40 & 213 & 61 & 314 & 65 & 113 \\
-5 & lm-evaluation-harness & avaliação LLM/RAG & 39 & 101 & 76 & 216 & 20 & 29 \\
-6 & Ragas~\cite{es2024ragas} & avaliação LLM/RAG & 36 & 330 & 145 & 511 & 210 & 106 \\
-7 & DeepEval~\cite{deepeval} & avaliação LLM/RAG & 34 & 208 & 83 & 325 & 88 & 93 \\
-8 & WebArena~\cite{zhou2024webarena} & agentes & 33 & 13 & 19 & 65 & 9 & 20 \\
-9 & BFCL & agentes & 32 & 41 & 22 & 95 & 8 & 18 \\
-10 & BEIR & recuperação & 30 & 61 & 8 & 99 & 18 & 7 \\
-11 & garak~\cite{derczynski2024garak} & guardrails/segurança & 30 & 45 & 20 & 95 & 12 & 18 \\
-12 & Guardrails AI & guardrails/segurança & 29 & 17 & 6 & 52 & 5 & 6 \\
-13 & Inspect AI & avaliação LLM/RAG & 28 & 71 & 12 & 111 & 5 & 24 \\
-14 & MTEB & recuperação & 26 & 35 & 7 & 68 & 9 & 5 \\
-15 & $\tau$-bench~\cite{yao2024taubench} & agentes & 22 & 6 & 11 & 39 & 6 & 15 \\
-16 & Giskard & avaliação LLM/RAG & 20 & 15 & 13 & 48 & 6 & 8 \\
-17 & PyRIT & guardrails/segurança & 19 & 53 & 11 & 83 & 8 & 11 \\
-18 & Opik & rastreamento & 19 & 35 & 8 & 62 & 11 & 16 \\
-19 & ranx & recuperação & 17 & 51 & 0 & 68 & 2 & 0 \\
-20 & AgentDojo~\cite{debenedetti2024agentdojo} & agentes & 15 & 27 & 5 & 47 & 4 & 14 \\
-21 & AgentBench~\cite{liu2024agentbench} & agentes & 12 & 41 & 8 & 61 & 5 & 15 \\
-22 & Arize Phoenix & rastreamento & 12 & 30 & 35 & 77 & 27 & 33 \\
-23 & LLM Guard & guardrails/segurança & 9 & 29 & 7 & 45 & 4 & 6 \\
-24 & OpenAI Evals & avaliação LLM/RAG & 7 & 76 & 15 & 98 & 17 & 36 \\
+1 & promptfoo~\cite{promptfoo} & avaliação LLM/RAG & 29 & 144 & 68 & 241 & 23 & 52 \\
+2 & garak~\cite{derczynski2024garak} & guardrails/segurança & 12 & 43 & 20 & 75 & 9 & 16 \\
+3 & DeepEval~\cite{deepeval} & avaliação LLM/RAG & 10 & 170 & 100 & 280 & 84 & 86 \\
+4 & Inspect AI & avaliação LLM/RAG & 9 & 63 & 17 & 89 & 8 & 22 \\
+5 & Ragas~\cite{es2024ragas} & avaliação LLM/RAG & 6 & 304 & 173 & 483 & 202 & 102 \\
+6 & lm-evaluation-harness & avaliação LLM/RAG & 5 & 62 & 92 & 159 & 11 & 23 \\
+7 & SWE-bench~\cite{jimenez2024swebench} & agentes & 5 & 38 & 62 & 105 & 20 & 65 \\
+8 & BFCL & agentes & 5 & 8 & 19 & 32 & 8 & 13 \\
+9 & $\tau$-bench~\cite{yao2024taubench} & agentes & 5 & 6 & 9 & 20 & 6 & 11 \\
+10 & Langfuse & rastreamento & 4 & 178 & 96 & 278 & 59 & 97 \\
+11 & LangSmith & rastreamento & 3 & 208 & 100 & 311 & 96 & 121 \\
+12 & Arize Phoenix & rastreamento & 3 & 22 & 36 & 61 & 27 & 33 \\
+13 & Giskard & avaliação LLM/RAG & 3 & 8 & 13 & 24 & 8 & 7 \\
+14 & AgentDojo~\cite{debenedetti2024agentdojo} & agentes & 2 & 28 & 5 & 35 & 3 & 13 \\
+15 & Guardrails AI & guardrails/segurança & 2 & 16 & 7 & 25 & 4 & 5 \\
+16 & MTEB & recuperação & 2 & 10 & 6 & 18 & 5 & 3 \\
+17 & autoevals & avaliação LLM/RAG & 2 & 10 & 3 & 15 & 3 & 4 \\
+18 & pytrec\_eval & recuperação & 2 & 8 & 2 & 12 & 3 & 1 \\
+19 & ir\_measures & recuperação & 2 & 6 & 2 & 10 & 4 & 1 \\
+20 & NeMo Guardrails & guardrails/segurança & 1 & 33 & 13 & 47 & 13 & 12 \\
+21 & PyRIT & guardrails/segurança & 1 & 17 & 9 & 27 & 6 & 8 \\
+22 & BEIR & recuperação & 1 & 14 & 8 & 23 & 11 & 5 \\
+23 & LLM Guard & guardrails/segurança & 1 & 10 & 9 & 20 & 3 & 6 \\
+24 & agentevals & agentes & 1 & 5 & 5 & 11 & 1 & 8 \\
 \midrule
-25--33 & Demais 9 ferramentas* & 4 famílias & 23 & 91 & 52 & 166 & 56 & 49 \\
+25--33 & Demais 9 ferramentas* & 4 famílias & 1 & 56 & 92 & 149 & 66 & 75 \\
 \midrule
-\multicolumn{3}{@{}l}{\textbf{Total (33 ferramentas de teste)}} & \textbf{665} & \textbf{2.018} & \textbf{855} & \textbf{3.538} & \textbf{786} & \textbf{929} \\
+\multicolumn{3}{@{}l}{\textbf{Total (33 ferramentas de teste)}} & \textbf{117} & \textbf{1.467} & \textbf{966} & \textbf{2.550} & \textbf{683} & \textbf{789} \\
 \bottomrule
 \end{tabular}
-\par\vspace{2pt}{\footnotesize *NeMo Guardrails (4/28/12), autoevals (4/9/1), continuous-eval (4/6/2), agentevals (3/14/3), ir\_measures (3/5/1), TruLens (2/12/23), UpTrain (2/2/7), RAGChecker (1/3/2) e pytrec\_eval (0/12/1).\par}
+\par\vspace{2pt}{\footnotesize *OpenAI Evals (1/0/18), Opik (0/25/10), TruLens (0/11/26), WebArena~\cite{zhou2024webarena} (0/9/17), ranx (0/6/1), RAGChecker (0/4/2), continuous-eval (0/1/2), AgentBench~\cite{liu2024agentbench} (0/0/9) e UpTrain (0/0/7).\par}
 \end{table*}
 
-O Ragas~\cite{es2024ragas} mantém a liderança em volume total (511), uso declarado (330) e menções (145), seguido por LangSmith (420), DeepEval (325)~\cite{deepeval} e Langfuse (314). Por famílias, avaliação de LLM/RAG reúne 33,7\% das ocorrências em N3 externo (224), agentes somam 23,8\% (158), rastreamento 17,4\% (116), segurança 13,7\% (91) e recuperação 11,4\% (76).
+O Ragas~\cite{es2024ragas} mantém a liderança em volume total (483), uso declarado (304) e menções (173), seguido por LangSmith (311), DeepEval (280)~\cite{deepeval}, Langfuse (278) e \textit{promptfoo} (241).
 
-Mesmo após isolar repositórios mantenedores, o rastreamento sustenta 116 ocorrências externas em CI (LangSmith 45, Langfuse 40, Opik 19 e Arize Phoenix 12). Ainda assim, P1 não se confirma: Kendall marca $\tau_b = 0{,}54$ [0,42; 0,59] entre N1 e N3 ($p < 0{,}001$), $\tau_b = 0{,}56$ [0,44; 0,60] entre N2 e N3 ($p < 0{,}001$) e $\tau_b = 0{,}52$ [0,41; 0,56] entre N1 e N2 ($p < 0{,}001$).
+Por famílias, avaliação de LLM/RAG concentra 55,6\% das ocorrências em N3 externo (65). Agentes somam 15,4\% (18), guardrails/segurança 14,5\% (17), rastreamento 8,5\% (10) e recuperação 6,0\% (7).
 
-A Figura~\ref{fig:dispersao} posiciona as 33 ferramentas entre menções ($\text{N1}+1$) e adoção externa em CI ($\text{N3}+1$). À esquerda da diagonal predominam ferramentas com alta conversão para CI, como Guardrails AI (29 em N3 para 6 em N1), BEIR (30 para 8) e ranx (17 para 0); à direita acumulam-se soluções amplamente discutidas, como Ragas (145 para 36) e LangSmith (109 para 45).
+Ao restringir N3 a passos executáveis de CI em organizações externas, \textbf{confirma-se P1 nas duas leituras}: Kendall marca $\tau_b = 0{,}41$ [0,25; 0,50] entre N1 e N3 na amostra ($p = 0{,}002$) e $\tau_{\text{pond}} = 0{,}46$ [0,29; 0,57] ponderado pelos pesos amostrais (ambos inferiores a 0,50).
+
+As correlações entre N2 e N3 ($\tau_b = 0{,}49$ [0,32; 0,57]; $p < 0{,}001$) e entre N1 e N2 ($\tau_b = 0{,}56$; $p < 0{,}001$) permanecem moderadas. Na sensibilidade que inclui citações nominais soltas em CI como N3 (176 unidades), obtém-se $\tau_b = 0{,}49$.
+
+A Figura~\ref{fig:dispersao} posiciona as 33 ferramentas entre menções ($\text{N1}+1$) e adoção externa em CI ($\text{N3}+1$). Nenhuma ferramenta desloca-se significativamente à esquerda da diagonal de alta adoção com baixa menção.
+
+Em contraste, TruLens (26 em N1 para 0 em N3), LangSmith (100 para 3) e Ragas (173 para 6) ilustram o afastamento típico entre visibilidade discursiva e integração contínua.
 
 \begin{figure}[htbp]
 \centering
 \begin{tikzpicture}
-\begin{loglogaxis}[
-    width=\columnwidth,
-    height=6.8cm,
-    xlabel={Menções ($\text{N1}+1$, escala logarítmica)},
-    ylabel={Adoção externa em CI ($\text{N3}+1$, escala logarítmica)},
-    xmin=0.8, xmax=260,
-    ymin=0.8, ymax=85,
-    xtick={1,2,6,11,51,151},
-    xticklabels={0,1,5,10,50,150},
-    ytick={1,2,6,11,51},
-    yticklabels={0,1,5,10,50},
-    grid=major,
-    grid style={dotted,gray!45},
-    tick label style={font=\scriptsize},
-    label style={font=\footnotesize},
-]
-\addplot[dashed,gray!70,domain=0.8:70,samples=2] {x};
-\addplot[only marks,mark=*,mark size=1.8pt,blue!75!black] coordinates {
-    (54,48) (110,46) (70,42) (62,41) (77,40) (146,37) (84,35)
-    (20,34) (23,33) (9,31) (21,31) (7,30) (13,29) (8,27)
-    (12,23) (14,21) (12,20) (9,20) (1,18) (6,16) (9,13)
-    (36,13) (8,10) (16,8) (13,5) (2,5) (3,5) (4,4) (2,4)
-    (24,3) (8,3) (3,2) (2,1)
-};
-\node[font=\tiny,anchor=south east,yshift=1pt] at (axis cs:54,48) {promptfoo};
-\node[font=\tiny,anchor=south west,xshift=-2pt,yshift=1pt] at (axis cs:110,46) {LangSmith};
-\node[font=\tiny,anchor=south,yshift=2pt] at (axis cs:70,42) {SWE-bench};
-\node[font=\tiny,anchor=west,xshift=2pt] at (axis cs:62,41) {Langfuse};
-\node[font=\tiny,anchor=north,yshift=-2pt] at (axis cs:146,37) {Ragas};
-\node[font=\tiny,anchor=north,yshift=-2pt] at (axis cs:84,35) {DeepEval};
-\node[font=\tiny,anchor=south,yshift=2pt] at (axis cs:20,34) {WebArena};
-\node[font=\tiny,anchor=east,xshift=-2pt] at (axis cs:7,30) {Guardrails AI};
-\node[font=\tiny,anchor=south east,xshift=1pt,yshift=2pt] at (axis cs:9,31) {BEIR};
-\node[font=\tiny,anchor=west,xshift=2pt] at (axis cs:1,18) {ranx};
-\node[font=\tiny,anchor=west,xshift=2pt] at (axis cs:36,13) {Arize Phoenix};
-\node[font=\tiny,anchor=west,xshift=2pt] at (axis cs:24,3) {TruLens};
-\node[font=\tiny,anchor=south west,xshift=1pt] at (axis cs:2,1) {pytrec\_eval};
-\end{loglogaxis}
+  \begin{axis}[width=\columnwidth, height=0.78\columnwidth,
+      xmode=log, ymode=log,
+      xmin=0.8, ymin=0.8, xmax=278, ymax=278,
+      xtick={1,2,11,101}, xticklabels={0,1,10,100},
+      ytick={1,2,11,101}, yticklabels={0,1,10,100},
+      xlabel={Menções (unidades N1)}, ylabel={Adoção externa (unidades N3)},
+      label style={font=\footnotesize}, tick label style={font=\scriptsize},
+      grid=major, major grid style={gray!20}, axis line style={gray!60}]
+    \addplot[gray!50, dashed, domain=0.8:278, samples=2] {x};
+    \addplot[only marks, mark=*, mark size=1.6pt, black!75]
+      coordinates {(69,30) (21,13) (101,11) (18,10) (174,7) (93,6) (63,6) (20,6) (10,6) (97,5) (101,4) (37,4) (14,4) (6,3) (8,3) (7,3) (4,3) (3,3) (3,3) (14,2) (10,2) (9,2) (10,2) (6,2) (19,2) (11,1) (27,1) (18,1) (2,1) (3,1) (3,1) (10,1) (8,1)};
+    \node[anchor=north west, font=\tiny, inner sep=1.5pt] at (axis cs:174,7) {Ragas};
+    \node[anchor=north west, font=\tiny, inner sep=1.5pt] at (axis cs:101,11) {DeepEval};
+    \node[anchor=north west, font=\tiny, inner sep=1.5pt] at (axis cs:101,4) {LangSmith};
+    \node[anchor=north west, font=\tiny, inner sep=1.5pt] at (axis cs:97,5) {Langfuse};
+    \node[anchor=north west, font=\tiny, inner sep=1.5pt] at (axis cs:27,1) {TruLens};
+    \node[anchor=north west, font=\tiny, inner sep=1.5pt] at (axis cs:18,1) {WebArena};
+    \node[anchor=north west, font=\tiny, inner sep=1.5pt] at (axis cs:93,6) {lm-eval-harness};
+    \node[anchor=north west, font=\tiny, inner sep=1.5pt] at (axis cs:11,1) {Opik};
+  \end{axis}
 \end{tikzpicture}
 \caption{Dispersão entre menções (N1) e adoção externa em CI (N3) das 33 ferramentas; a linha tracejada indica N3 = N1.}
 \label{fig:dispersao}
 \Description{Gráfico de dispersão em escala logarítmica comparando menções (N1) e adoção externa em integração contínua (N3) das 33 ferramentas de teste.}
 \end{figure}
 
-O peso de fontes ancoradas em código explicita assimetrias de visibilidade: ferramentas como ranx (zero N1), AgentBench (8 em N1)~\cite{liu2024agentbench}, LLM Guard (7 em N1) e MTEB (7 em N1) concentram-se em repositórios. A Tabela~\ref{tab:pares} reúne os principais pares de coocorrência externos entre os 252 pares analisados sobre 10.123 unidades.
+O peso de fontes ancoradas em código explicita assimetrias de visibilidade: ferramentas como MTEB, ranx e AgentDojo concentram proporcionalmente mais ocorrências estruturais que menções abertas. A Tabela~\ref{tab:pares} reúne os principais pares de coocorrência externa entre os 200 pares analisados sobre 10.267 unidades.
 
 \begin{table}[htbp]
 \centering
-\caption{Pares selecionados de coocorrência externa ($N = 10.123$ unidades).}
+\caption{Pares selecionados de coocorrência externa ($N = 10.267$ unidades).}
 \label{tab:pares}
 \footnotesize
 \setlength{\tabcolsep}{3.5pt}
@@ -341,29 +375,33 @@ O peso de fontes ancoradas em código explicita assimetrias de visibilidade: fer
 \toprule
 \textbf{Grupo} & \textbf{Par} & \textbf{Unid.} & \textbf{Jaccard} & \textbf{\textit{Lift}} \\
 \midrule
-F $\times$ F & Guardrails AI + NeMo Guardrails & 10 & 0,12 & 44,2 \\
-F $\times$ F & garak + PyRIT & 21 & 0,13 & 27,0 \\
-F $\times$ F & garak + promptfoo & 34 & 0,12 & 16,1 \\
-F $\times$ F & Arize Phoenix + Giskard & 5 & 0,04 & 13,7 \\
-F $\times$ M & SWE-bench + teste metamórfico & 8 & 0,04 & 13,3 \\
-F $\times$ M & Arize Phoenix + avaliação humana & 9 & 0,05 & 9,8 \\
-F $\times$ M & garak + \textit{red teaming} & 21 & 0,07 & 9,2 \\
-F $\times$ M & SWE-bench + avaliação humana & 15 & 0,06 & 8,5 \\
-F $\times$ SUT & TruLens + LlamaIndex & 8 & 0,03 & 10,9 \\
-F $\times$ SUT & Arize Phoenix + AutoGen & 6 & 0,04 & 9,5 \\
-F $\times$ SUT & Guardrails AI + CrewAI & 5 & 0,03 & 7,6 \\
-F $\times$ SUT & DeepEval + Haystack & 10 & 0,03 & 7,4 \\
+F $\times$ F & garak + PyRIT & 18 & 0,21 & 91,3 \\
+F $\times$ F & Guardrails AI + NeMo Guardrails & 10 & 0,16 & 87,4 \\
+F $\times$ F & Arize Phoenix + OpenAI Evals & 6 & 0,08 & 53,2 \\
+F $\times$ F & Inspect AI + OpenAI Evals & 6 & 0,06 & 36,4 \\
+F $\times$ M & OpenAI Evals + teste por asserção & 7 & 0,03 & 19,0 \\
+F $\times$ M & PyRIT + \textit{red teaming} & 7 & 0,03 & 11,7 \\
+F $\times$ M & LLM Guard + \textit{red teaming} & 5 & 0,02 & 11,3 \\
+F $\times$ M & garak + \textit{red teaming} & 18 & 0,06 & 10,8 \\
+F $\times$ SUT & TruLens + LlamaIndex & 11 & 0,05 & 16,8 \\
+F $\times$ SUT & Opik + CrewAI & 6 & 0,04 & 15,2 \\
+F $\times$ SUT & Arize Phoenix + DSPy & 6 & 0,05 & 15,1 \\
+F $\times$ SUT & Arize Phoenix + AutoGen & 6 & 0,05 & 14,2 \\
 \bottomrule
 \end{tabular}
 \par\vspace{2pt}{\footnotesize Nota: F indica ferramenta de teste; M, método; SUT, sistema sob teste.\par}
 \end{table}
 
-Os pares de maior razão de elevação na Tabela~\ref{tab:pares} revelam composições de segurança em camadas, como Guardrails AI com NeMo Guardrails (\textit{Lift} 44,2), \textit{garak} com PyRIT (\textit{Lift} 27,0) e \textit{garak} com \textit{promptfoo} (34 unidades; \textit{Lift} 16,1). Destacam-se ainda combinações específicas de orquestração e avaliação, como TruLens com LlamaIndex (\textit{Lift} 10,9) e Arize Phoenix com AutoGen (\textit{Lift} 9,5).
+Os pares de maior razão de elevação na Tabela~\ref{tab:pares} revelam composições de segurança em camadas. Destacam-se \textit{garak} com PyRIT (\textit{Lift} 91,3), Guardrails AI com NeMo Guardrails (\textit{Lift} 87,4) e \textit{garak} com \textit{red teaming} (18 unidades; \textit{Lift} 10,8).
+
+Sobressaem ainda combinações específicas de orquestração e rastreamento, como TruLens com LlamaIndex (\textit{Lift} 16,8), Opik com CrewAI (\textit{Lift} 15,2) e Arize Phoenix com DSPy (\textit{Lift} 15,1) e AutoGen (\textit{Lift} 14,2).
 
 \subsection{QP2: Métodos e Escada de Oráculos}
 \label{sec:res-qp2}
 
-Os dez métodos do catálogo totalizam 2.269 ocorrências, das quais 1.290 unidades reúnem ao menos um sinal de oráculo dentre os sete métodos mapeados na taxonomia. Como mostra a Tabela~\ref{tab:qp2}, o método LLM como juiz lidera com folga (671 unidades)~\cite{zheng2023judging}, seguido por conjunto \textit{golden} (467), regressão de avaliação (368), \textit{red teaming} (244) e teste por asserção (203).
+Os dez métodos do catálogo totalizam 2.237 ocorrências, das quais 1.315 unidades reúnem ao menos um sinal de oráculo dentre os sete métodos mapeados na taxonomia.
+
+Como mostra a Tabela~\ref{tab:qp2}, o método LLM como juiz lidera com folga (692 unidades)~\cite{zheng2023judging}, seguido por conjunto \textit{golden} (465), regressão de avaliação (382), \textit{red teaming} (228) e teste por asserção (199).
 
 \begin{table*}[tb]
 \centering
@@ -374,153 +412,191 @@ Os dez métodos do catálogo totalizam 2.269 ocorrências, das quais 1.290 unida
 \toprule
 \textbf{Método} & \textbf{Degrau de oráculo} & \textbf{Unidades} & \textbf{RAG} & \textbf{Agente} \\
 \midrule
-LLM como juiz & pseudoautomático & 671 & 254 & 337 \\
-conjunto \textit{golden} & referência & 467 & 243 & 252 \\
-regressão de avaliação & referência & 368 & 150 & 239 \\
-\textit{red teaming} & --- & 244 & 97 & 172 \\
-teste por asserção & especificado & 203 & 103 & 153 \\
-avaliação humana & humano & 121 & 81 & 82 \\
-avaliação de trajetória & --- & 96 & 44 & 71 \\
-geração sintética de testes & --- & 42 & 30 & 32 \\
-teste metamórfico & derivado & 41 & 29 & 33 \\
-teste baseado em propriedades & derivado & 16 & 6 & 11 \\
+LLM como juiz & pseudoautomático & 692 & 254 & 340 \\
+conjunto \textit{golden} & referência & 465 & 240 & 243 \\
+regressão de avaliação & referência & 382 & 157 & 256 \\
+\textit{red teaming} & --- & 228 & 83 & 154 \\
+teste por asserção & especificado & 199 & 96 & 149 \\
+avaliação humana & humano & 114 & 72 & 70 \\
+avaliação de trajetória & --- & 85 & 30 & 58 \\
+geração sintética de testes & --- & 30 & 20 & 21 \\
+teste metamórfico & derivado & 26 & 16 & 19 \\
+teste baseado em propriedades & derivado & 16 & 7 & 11 \\
 \bottomrule
 \end{tabular}
 \end{table*}
 
-Métodos específicos de robustez formal ainda têm baixa penetração empírica: avaliação de trajetória aparece em 96 unidades, geração sintética de testes em 42, teste metamórfico em 41 e teste baseado em propriedades em apenas 16. Parcela expressiva das ocorrências envolve sistemas híbridos (como 176 registros simultâneos para LLM como juiz) ou itens sem rótulo de paradigma (256 no mesmo método).
+Métodos específicos de robustez formal ainda têm baixa penetração empírica. A avaliação de trajetória aparece em 85 unidades, a geração sintética de testes em 30, o teste metamórfico em 26 e o teste baseado em propriedades em apenas 16.
 
-A consolidação na escada de Barr et al.~\cite{barr2015oracle}, apresentada na Tabela~\ref{tab:oraculos}, revela uma inversão importante em relação à coleta preliminar. Os oráculos de referência passam à liderança global com 729 unidades (56,5\% das 1.290 com sinal), superando os pseudoautomáticos (671; 52,0\%), seguidos por especificados (203; 15,7\%), humanos (121; 9,4\%) e derivados (55; 4,3\%).
+Parcela expressiva das ocorrências envolve sistemas híbridos (como 168 registros simultâneos para LLM como juiz) ou itens sem rótulo de paradigma (266 no mesmo método).
+
+A consolidação na escada de Barr et al.~\cite{barr2015oracle}, apresentada na Tabela~\ref{tab:oraculos}, mantém os oráculos de referência na liderança global com 735 unidades (55,9\% das 1.315 com sinal), seguidos por pseudoautomáticos (692; 52,6\%), especificados (199; 15,1\%), humanos (114; 8,7\%) e derivados (42; 3,2\%).
 
 \begin{table}[htbp]
 \centering
-\caption{Escada de oráculos nas unidades com sinal ($N = 1.290$ todas; $465$ RAG; $656$ Agente).}
+\caption{Escada de oráculos nas unidades com sinal ($N = 1.315$ todas; $470$ RAG; $664$ Agente).}
 \label{tab:oraculos}
 \footnotesize
 \begin{tabular}{@{}lrrr@{}}
 \toprule
 \textbf{Degrau} & \textbf{Todas (\%)} & \textbf{RAG (\%)} & \textbf{Agente (\%)} \\
 \midrule
-Referência & 729 (56,5) & 322 (69,2) & 418 (63,7) \\
-Pseudoautomático & 671 (52,0) & 254 (54,6) & 337 (51,4) \\
-Especificado & 203 (15,7) & 103 (22,2) & 153 (23,3) \\
-Humano & 121 (9,4) & 81 (17,4) & 82 (12,5) \\
-Derivado & 55 (4,3) & 33 (7,1) & 42 (6,4) \\
+Referência & 735 (55,9) & 324 (68,9) & 420 (63,3) \\
+Pseudoautomático & 692 (52,6) & 254 (54,0) & 340 (51,2) \\
+Especificado & 199 (15,1) & 96 (20,4) & 149 (22,4) \\
+Humano & 114 (8,7) & 72 (15,3) & 70 (10,5) \\
+Derivado & 42 (3,2) & 23 (4,9) & 30 (4,5) \\
 \bottomrule
 \end{tabular}
 \par\vspace{2pt}{\footnotesize Nota: somas superam 100\% porque uma unidade pode combinar múltiplos degraus.\par}
 \end{table}
 
-Os valores das colunas excedem 100\% (somando 137,9\% no total, 170,5\% em RAG e 157,3\% em agentes) porque unidades combinam múltiplos oráculos em paralelo, sobretudo conjuntos \textit{golden} avaliados por juízes de LLM. Nota-se ainda que a avaliação humana cresce de 5,0\% na coleta piloto para 9,4\% no \textit{corpus} expandido, alcançando 17,4\% no recorte de RAG.
+Os valores das colunas excedem 100\% (somando 135,5\% no total, 163,6\% em RAG e 151,9\% em agentes) porque unidades combinam múltiplos oráculos em paralelo, sobretudo conjuntos \textit{golden} avaliados por juízes de LLM. Nota-se ainda que a avaliação humana alcança 15,3\% no recorte de RAG e 10,5\% no recorte de agentes.
 
 \subsection{Descoberta Aberta e Saturação do Catálogo}
 \label{sec:res-descoberta}
 
-O módulo de descoberta sobre 10.438 textos válidos extraiu 114 termos candidatos sem promoção automática ao catálogo semente de 51 entradas. O principal achado arquitetural é a emergência do \textit{Model Context Protocol} (MCP), concentrado em um grupo temático de 2.071 documentos ligados à padronização de ferramentas para agentes.
+O módulo de descoberta sobre 10.196 textos válidos (excluídos 6.446 documentos curtos; vocabulário de 158.503 termos) extraiu 107 termos candidatos sem promoção automática ao catálogo semente de 51 entradas.
 
-Por outro lado, a modelagem de tópicos evidenciou blocos recorrentes de ruído editorial e técnico no \textit{corpus} bruto. Destacam-se grupos de modelos automáticos de relato de erro (1.681 e 734 documentos), boletins automáticos de artigos recentes (286), referências sociais (131), alertas de pacotes vulneráveis (42) e rastros de documentação de ferramentas (26).
+Destaca-se a recorrência em torno do \textit{Model Context Protocol} (MCP) e de assistentes de codificação (\textit{mcp}, \textit{mcp server}, \textit{claude code}). Aparecem ainda rastros de relatos de erro, pacotes Python (\textit{site-packages}), documentação e boletins (\textit{expected behavior}, \textit{site-crawl}, \textit{arxiv}).
 
-Na análise de saturação ao longo de 674 lotes sequenciais, o último código inédito (\texttt{tool:uptrain}) ingressou no lote 24, completando as 51 entradas da taxonomia. Os 650 lotes subsequentes não adicionaram códigos novos, estabilizando a cobertura em 5,38\% das 10.123 unidades, embora esse resultado reflita o esgotamento do dicionário fixo antes da revisão dos 114 candidatos.
+Na análise de saturação ao longo de 666 lotes sequenciais, 42 das 51 entradas ingressaram até o lote 4 e o último código inédito (\texttt{tool:continuous-eval}) ingressou no lote 88, completando integralmente a taxonomia. Os 578 lotes subsequentes não adicionaram códigos novos do catálogo fixo, antes da revisão manual dos 107 termos candidatos.
 
 \subsection{QP3: Maturidade de Testes e Engajamento}
 \label{sec:res-qp3}
 
-Do \textit{corpus} de 16.836 itens, 7.339 cumpriram os critérios de elegibilidade de engajamento (excluídos 6.103 sem métrica, 2.505 de dor, 839 recentes e 50 automatizados). Nesse recorte, 20 ferramentas ($n = 1.060$ ocorrências) e todos os 10 métodos atingiram $n \ge 10$ itens.
+Do \textit{corpus} de 16.642 itens, 7.316 cumpriram os critérios de elegibilidade de engajamento (excluídos 6.171 sem métrica, 2.518 de dor, 544 recentes e 93 postagens automatizadas). Nesse recorte, 18 ferramentas ($n = 993$ ocorrências) e todos os 10 métodos atingiram $n \ge 10$ itens.
 
-A Tabela~\ref{tab:qp3} apresenta as 15 ferramentas de maior mediana de engajamento $E$, seguidas das cinco elegíveis restantes em nota. Apenas MTEB ($0{,}73$) e Arize Phoenix ($0{,}66$) superam o piso comum de $0{,}43$, no qual empatam as demais 18 ferramentas e todos os 10 métodos (como LLM como juiz, $n = 669$, e conjunto \textit{golden}, $n = 484$).
+A Tabela~\ref{tab:qp3} apresenta as 15 ferramentas de maior engajamento médio $E$, seguidas das três elegíveis restantes em nota. Pela média de $E$, destacam-se Opik ($0{,}59$), Arize Phoenix ($0{,}59$) e Ragas ($0{,}59$), enquanto entre os métodos lidera LLM como juiz ($n = 620$, média $0{,}50$ [0,49; 0,52]).
+
+Como 54,9\% dos 7.316 itens elegíveis são \textit{issues} do GitHub das quais 83,4\% (3.354 de 4.020) têm zero reações, 60,4\% do \textit{corpus} fica no piso do estrato ($E = 0{,}4171$). Assim, todas as 18 ferramentas e todos os 10 métodos empatam na mediana de $0{,}42$ (tornando $\rho_{\text{mediana}}$ indefinido).
 
 \begin{table}[htbp]
 \centering
-\caption{Engajamento $E$ por ferramenta ($n \ge 10$; 15 primeiras de 20 elegíveis).}
+\caption{Engajamento médio $E$ por ferramenta ($n \ge 10$; 15 primeiras de 18 elegíveis).}
 \label{tab:qp3}
 \footnotesize
 \setlength{\tabcolsep}{3.5pt}
 \begin{tabular}{@{}lrcr@{}}
 \toprule
-\textbf{Ferramenta} & \textbf{$n$} & \textbf{Mediana $E$ [IC 95\%]} & \textbf{N3 ext.} \\
+\textbf{Ferramenta} & \textbf{$n$} & \textbf{Média $E$ [IC 95\%]} & \textbf{N3 ext.} \\
 \midrule
-MTEB & 11 & 0,73 [0,43; 0,90] & 26 \\
-Arize Phoenix & 35 & 0,66 [0,43; 0,89] & 12 \\
-lm-eval-harness & 210 & 0,43 [0,43; 0,43] & 39 \\
-Ragas~\cite{es2024ragas} & 159 & 0,43 [0,43; 0,43] & 36 \\
-LangSmith & 126 & 0,43 [0,43; 0,43] & 45 \\
-Langfuse & 99 & 0,43 [0,43; 0,43] & 40 \\
-DeepEval~\cite{deepeval} & 90 & 0,43 [0,43; 0,43] & 34 \\
-SWE-bench~\cite{jimenez2024swebench} & 70 & 0,43 [0,43; 0,43] & 41 \\
-promptfoo~\cite{promptfoo} & 63 & 0,43 [0,43; 0,43] & 47 \\
-TruLens & 28 & 0,43 [0,43; 0,43] & 2 \\
-PyRIT & 27 & 0,43 [0,43; 0,43] & 19 \\
-garak~\cite{derczynski2024garak} & 26 & 0,43 [0,43; 0,43] & 30 \\
-Inspect AI & 18 & 0,43 [0,43; 0,43] & 28 \\
-Opik & 18 & 0,43 [0,43; 0,43] & 19 \\
-OpenAI Evals & 17 & 0,43 [0,43; 0,43] & 7 \\
+Opik & 18 & 0,59 [0,48; 0,71] & 0 \\
+Arize Phoenix & 35 & 0,59 [0,51; 0,67] & 3 \\
+Ragas~\cite{es2024ragas} & 175 & 0,59 [0,55; 0,62] & 6 \\
+SWE-bench~\cite{jimenez2024swebench} & 60 & 0,55 [0,50; 0,61] & 5 \\
+Langfuse & 87 & 0,54 [0,49; 0,59] & 4 \\
+lm-eval-harness & 186 & 0,54 [0,51; 0,57] & 5 \\
+LangSmith & 102 & 0,52 [0,48; 0,57] & 3 \\
+WebArena~\cite{zhou2024webarena} & 20 & 0,51 [0,43; 0,59] & 0 \\
+DeepEval~\cite{deepeval} & 90 & 0,50 [0,46; 0,55] & 10 \\
+OpenAI Evals & 15 & 0,48 [0,40; 0,58] & 1 \\
+Inspect AI & 15 & 0,48 [0,40; 0,57] & 9 \\
+TruLens & 31 & 0,48 [0,41; 0,55] & 0 \\
+promptfoo~\cite{promptfoo} & 72 & 0,47 [0,43; 0,51] & 29 \\
+BFCL & 12 & 0,46 [0,42; 0,53] & 5 \\
+PyRIT & 23 & 0,45 [0,39; 0,53] & 1 \\
 \bottomrule
 \end{tabular}
-\par\vspace{2pt}{\footnotesize Nota: WebArena ($n=15$, 0,43 [0,43; 0,66]), BFCL (14), Giskard (13), NeMo Guardrails (11) e AgentBench (10) também apresentam mediana 0,43 [0,43; 0,43].\par}
+\par\vspace{2pt}{\footnotesize Nota: Giskard ($n=17$, 0,45 [0,38; 0,52]), garak (25, 0,43 [0,38; 0,49]) e NeMo Guardrails (10, 0,42 [0,37; 0,49]) completam as 18 elegíveis. Todas as 18 ferramentas apresentam mediana igual ao piso de 0,42.\par}
 \end{table}
 
-Esse empate generalizado decorre da composição da amostra: 56,1\% dos 7.339 itens elegíveis são \textit{issues} do GitHub, das quais 86,0\% (3.544 de 4.120) possuem zero reações, fixando o posto percentual médio em $E = 0{,}4301$. O teste de Kruskal--Wallis detecta variação global discreta ($H = 34{,}86$; $p = 0{,}015$; $\varepsilon^2 = 0{,}033$), sem pares significativos após Dunn--Holm (menor $p_{\text{Holm}} = 0{,}162$).
+O teste de Kruskal--Wallis confirma variação significativa entre as 18 ferramentas ($H = 39{,}48$; $p = 0{,}002$; $\varepsilon^2 = 0{,}040$), com um par estatisticamente significativo após correção de Dunn--Holm dentre 153 testados: \textit{promptfoo} contra Ragas ($p_{\text{Holm}} = 0{,}024$; $\delta = -0{,}27$).
 
-Nos quadrantes, apenas MTEB e Arize Phoenix combinam alto engajamento e baixa adoção; dez ferramentas unem baixo engajamento com alta adoção, oito ocupam o quadrante inferior duplo e zero alcança o quadrante superior duplo. Em consonância, a correlação de Spearman marca $\rho = -0{,}21$ ($p = 0{,}374$), sustentando P2 e mantendo-se sem listas agregadoras ($\rho = -0{,}26$), sem estratos truncados ($\rho = -0{,}12$ em 2.550 itens) e na binomial negativa ($\rho = -0{,}20$; $p = 0{,}400$, sem convergência numérica).
+Nos quadrantes, cinco ferramentas reúnem alto engajamento e alta adoção (DeepEval, Langfuse, lm-eval-harness, Ragas e SWE-bench). Quatro combinam alto engajamento e baixa adoção (Arize Phoenix, LangSmith, Opik e WebArena).
 
-Para P3 em 2025--2026 ($n = 2.043$: 1.608 de agentes contra 435 de RAG), o contraste não ajustado é nulo ($\delta = 0{,}04$; $p = 0{,}140$), mas o modelo OLS ajustado por idade e estrato indica leve vantagem de agentes ($\beta = 0{,}023$; IC 95\% $[0{,}001; 0{,}045]$; $p = 0{,}044$). Já as 2.505 \textit{issues} de falha concentram-se em 24 ferramentas, lideradas por Arize Phoenix (398), Langfuse (311), Ragas (252) e Guardrails AI (223).
+Outras quatro combinam baixo engajamento e alta adoção (BFCL, \textit{garak}, Inspect AI e \textit{promptfoo}), enquanto cinco ocupam o quadrante inferior duplo.
+
+\textbf{Confirma-se P2 nas duas leituras}: Spearman marca $\rho = -0{,}09$ [-0,30; 0,21] ($p = 0{,}715$) na amostra e $\rho_{\text{pond}} = 0{,}17$ ponderado. O padrão mantém-se no topo de 10\% ($\rho = 0{,}15$), sem listas agregadoras ($\rho = -0{,}16$) e sem truncamento ($\rho = -0{,}26$ em 2.911 itens).
+
+O modelo binomial negativo (\textit{Negative Binomial} -- NB) também corrobora o ranqueamento das médias ($\rho_{\text{NB}} = 0{,}67$; $p = 0{,}002$), embora esse modelo linear generalizado (\textit{Generalized Linear Model} -- GLM) não tenha atingido convergência numérica completa.
+
+Para P3 em 2025--2026 ($n = 2.253$: 1.760 de agentes contra 493 de RAG), o contraste não ajustado é nulo ($\delta = 0{,}01$; $p = 0{,}840$). Já o modelo OLS ajustado por idade e estrato confirma vantagem de agentes ($\beta = 0{,}025$; IC 95\% HC3 $[0{,}005; 0{,}046]$; $p = 0{,}016$), \textbf{sustentando P3}.
+
+Quanto aos relatos de defeito, as 2.518 \textit{issues} de falha concentram-se em 25 ferramentas. Esse subconjunto é liderado por Arize Phoenix (398), Langfuse (311), Ragas (253) e Guardrails AI (221).
 
 \subsection{QP4 e QP5: Falhas e Transferência entre Paradigmas}
 \label{sec:res-qp4-qp5}
 
-A resposta qualitativa para QP4 depende da triagem em duas trilhas e da dupla codificação manual dos 16.836 itens atualmente marcados como pendentes no fluxo PRISMA~\cite{page2021prisma,cruzes2011thematic}. Quando concluída, essa codificação permitirá confrontar falhas relatadas por praticantes com taxonomias de defeitos de RAG e multiagentes~\cite{barnett2024seven,cemri2025multiagent}.
+A resposta qualitativa para QP4 depende da triagem em duas trilhas e dupla codificação dos 16.642 itens pendentes no PRISMA~\cite{page2021prisma,cruzes2011thematic}. Concluída essa etapa, falhas relatadas serão confrontadas com taxonomias de defeitos de RAG e multiagentes~\cite{barnett2024seven,cemri2025multiagent}.
 
-Para QP5, a prévia sobre as 33 ferramentas de teste (excluídos os SUTs) indica forte convergência: 31 ocorrem em ambos os sistemas (Jaccard de 0,94), e 100\% das ferramentas em agentes aparecem também em RAG. Apenas \texttt{ir\_measures} (3) e \texttt{ranx} (2) restringem-se a RAG, sem ferramentas exclusivas de agentes.
+Para QP5, a prévia sobre as 33 ferramentas de teste (excluídos os SUTs) indica forte convergência: 32 ocorrem em ambos os sistemas (Jaccard de 0,97), e 100\% das ferramentas em agentes aparecem também em RAG. Apenas \texttt{ranx} (2 em RAG) restringe-se a recuperação em RAG, sem ferramentas exclusivas de agentes.
 
-Todos os 10 métodos e 5 degraus de oráculo também são compartilhados entre RAG e agentes. Contudo, essa elevada interseção requer cautela interpretativa: 65,5\% das ocorrências de ferramentas (2.318 de 3.538) e 27,9\% dos métodos (632 de 2.269) ficam sem rótulo de paradigma, somados a casos híbridos.
+Todos os 10 métodos e 5 degraus de oráculo também são compartilhados entre RAG e agentes. Contudo, essa elevada interseção requer cautela interpretativa: 58,8\% das ocorrências externas de ferramentas (1.500 de 2.550) e 28,7\% dos métodos (643 de 2.237) ficam sem rótulo de paradigma, somados a casos híbridos.
 
 % ============================================================
 \section{Discussão}
 \label{sec:discussao}
 % ============================================================
 
-A ampliação do \textit{corpus} para 16.836 itens e a remoção de ocorrências mantenedoras alteram interpretações do recorte piloto~\cite{msrkit2027}. Primeiro, ferramentas de rastreamento como LangSmith (45 em N3 externo), Langfuse (40) e Opik (19) consolidam uso contínuo externo e somam 17,4\% da adoção em CI.
+A consolidação do \textit{corpus} de 16.642 itens com filtragem de ruído em \textit{issues}, análise sintática de passos executáveis de CI e isolamento organizacional (\textit{self}) altera interpretações preliminares~\cite{msrkit2027}.
 
-Segundo, P1 não se sustenta ($\tau_b = 0{,}54$ em N1 $\times$ N3; $0{,}56$ em N2 $\times$ N3)~\cite{kendall1938,borges2018star}. Ainda assim, persiste assimetria de conversão: bibliotecas de avaliação lideram em volume, enquanto \textit{benchmarks} de agentes e guardrails convertem fração maior para CI~\cite{zhou2024webarena,derczynski2024garak}.
+Primeiro, ferramentas dedicadas com interface de linha de comando e execução em CI concentram a adoção contínua verificável. Destacam-se \textit{promptfoo} (29 em N3 externo), \textit{garak} (12), DeepEval (10) e Inspect AI (9), somando 55,6\% na família de avaliação LLM/RAG contra 8,5\% em rastreamento.
 
-Terceiro, oráculos de referência (56,5\%) superam pseudoautomáticos (52,0\%), mostrando que juízes de LLM complementam conjuntos \textit{golden}~\cite{barr2015oracle,zheng2023judging}. Por fim, P2 se confirma ($\rho = -0{,}21$): engajamento discursivo e adoção em CI medem fenômenos distintos, agravados pelo piso de zero reações em 86,0\% das \textit{issues} e pela concentração de relatos de falha em observabilidade~\cite{borges2018star,yehudai2025agents}.
+Segundo, \textbf{P1 se confirma nas duas leituras} ($\tau_b = 0{,}41$ na amostra e $\tau_{\text{pond}} = 0{,}46$ ponderado em N1 $\times$ N3; $0{,}49$ em N2 $\times$ N3)~\cite{kendall1938,borges2018star}.
+
+Esse resultado mostra que popularidade discursiva e dependências declaradas não garantem execução sustentada em CI. O contraste é visível entre Ragas (173 menções contra 6 em N3 externo) e LangSmith (100 contra 3) frente a \textit{promptfoo} (29 em N3)~\cite{zhou2024webarena,derczynski2024garak}.
+
+Terceiro, oráculos de referência (55,9\%) superam pseudoautomáticos (52,6\%), evidenciando que juízes de LLM complementam conjuntos \textit{golden}~\cite{barr2015oracle,zheng2023judging}.
+
+Por fim, confirmam-se \textbf{P2} ($\rho = -0{,}09$; $\rho_{\text{pond}} = 0{,}17$) e \textbf{P3} ($\beta = 0{,}025$; $p = 0{,}016$). Engajamento discursivo e adoção em CI medem fenômenos distintos, agravados por zero reações em 83,4\% das \textit{issues} do GitHub e falhas concentradas em observabilidade~\cite{borges2018star,yehudai2025agents}.
 
 % ============================================================
 \section{Ameaças à Validade}
 \label{sec:ameacas}
 % ============================================================
 
-Na \textbf{validade interna}, embora os 27 registros em repositórios mantenedores tenham sido isolados, a triagem manual pendente mantém ruído tópico e 65,5\% das detecções externas de ferramentas sem rótulo de paradigma~\cite{page2021prisma,kalliamvakou2014promises}. Além disso, 86,0\% das \textit{issues} elegíveis no GitHub não têm reações, comprimindo medianas de engajamento em $0{,}4301$.
+Na \textbf{validade interna}, 88 pares em repositórios e organizações mantenedoras foram isolados e 93 boletins automáticos foram filtrados pelo título. Ainda assim, a triagem manual pendente mantém ruído tópico e 58,8\% das ocorrências externas sem rótulo de paradigma~\cite{page2021prisma,kalliamvakou2014promises}.
 
-Na \textbf{validade de construto}, o alinhamento lexical verifica presença em CI sem medir cobertura de asserções ou bloqueios em \textit{pull requests} (PRs)~\cite{kalliamvakou2014promises,raulamo2017choosing}. O modelo binomial negativo complementar não convergiu numericamente, e os 114 termos descobertos por LDA ainda exigem revisão manual~\cite{blei2003lda,cruzes2011thematic}.
+Além disso, 83,4\% das 4.020 \textit{issues} elegíveis no GitHub não têm reações, comprimindo medianas no piso ($0{,}42$) e exigindo a média de $E$ para P2. Complementarmente, 2.190 repositórios presentes apenas via \textit{issues} não ancoram sinais estruturais N2/N3 sem item correspondente de código ou repositório.
 
-Na \textbf{validade externa}, 122 consultas atingiram o teto de 100 resultados por estrato anual e a captura restringiu-se a termos em inglês em cinco plataformas públicas~\cite{garousi2019guidelines,msrkit2027}. Os achados refletem o ecossistema aberto entre 2023 e 2026 e não se generalizam diretamente a \textit{pipelines} proprietários fechados~\cite{ralph2020standards}.
+Na \textbf{validade de construto}, o alinhamento em CI verifica etapas executáveis e instalações em projetos sustentados sem medir cobertura de asserções ou bloqueios em \textit{pull requests} (PRs)~\cite{kalliamvakou2014promises,raulamo2017choosing}.
+
+Adicionalmente, o modelo binomial negativo complementar não obteve convergência numérica plena. Os 107 termos candidatos descobertos por LDA também exigem revisão manual antes de eventual incorporação ao catálogo~\cite{blei2003lda,cruzes2011thematic}.
+
+Na \textbf{validade externa}, 113 consultas atingiram o teto de 100 resultados por estrato anual (estimativa de 321.072 registros não examinados) e a captura restringiu-se a termos em inglês em cinco plataformas públicas, mitigada pela análise ponderada~\cite{garousi2019guidelines,msrkit2027}.
+
+Os achados refletem o ecossistema aberto entre janeiro de 2023 e agosto de 2026. Portanto, os padrões observados não se generalizam diretamente a \textit{pipelines} proprietários fechados~\cite{ralph2020standards}.
 
 % ============================================================
 \section{Trabalhos Relacionados}
 \label{sec:relacionados}
 % ============================================================
 
-Levantamentos recentes sistematizam a avaliação de LLMs~\cite{chang2024survey}, sistemas RAG~\cite{yu2024ragsurvey} e agentes autônomos~\cite{yehudai2025agents} com foco em métricas acadêmicas e \textit{benchmarks} padronizados, enquanto Zhang et al.~\cite{zhang2022mltesting} organizam fundamentos do teste de sistemas de aprendizado de máquina. Este estudo complementa essas sínteses ao medir a adoção prática observável em repositórios e discussões técnicas.
+Levantamentos recentes sistematizam a avaliação de LLMs~\cite{chang2024survey}, sistemas RAG~\cite{yu2024ragsurvey} e agentes autônomos~\cite{yehudai2025agents} com foco em métricas acadêmicas e \textit{benchmarks} padronizados.
 
-Na investigação de defeitos, Barnett et al.~\cite{barnett2024seven} derivam sete pontos de falha em sistemas RAG a partir de estudos de caso, e Cemri et al.~\cite{cemri2025multiagent} propõem uma taxonomia de falhas para arquiteturas multiagentes. A etapa qualitativa prevista para QP4 confrontará diretamente essas categorias com os relatos reais coletados da comunidade~\cite{cruzes2011thematic}.
+De forma complementar, Zhang et al.~\cite{zhang2022mltesting} organizam fundamentos do teste de sistemas de aprendizado de máquina. Este estudo amplia essas sínteses ao medir a adoção prática observável em repositórios e discussões técnicas.
 
-Metodologicamente, o desenho aproxima-se do trabalho de Raulamo-Jurvanen et al.~\cite{raulamo2017choosing}, que empregaram literatura cinza para mapear ferramentas preferidas na indústria, e dialoga com a análise de Borges e Valente~\cite{borges2018star} sobre limites da popularidade em repositórios. Como avanço, este artigo estratifica as ocorrências em três níveis de evidência e isola \textit{frameworks} de SUT dos instrumentos de verificação~\cite{kalliamvakou2014promises}.
+Na investigação de defeitos, Barnett et al.~\cite{barnett2024seven} derivam sete pontos de falha em sistemas RAG a partir de estudos de caso. Já Cemri et al.~\cite{cemri2025multiagent} propõem uma taxonomia de falhas para arquiteturas multiagentes.
+
+A etapa qualitativa prevista para QP4 confrontará diretamente essas categorias da literatura com os relatos reais coletados da comunidade~\cite{cruzes2011thematic}.
+
+Metodologicamente, o desenho aproxima-se de Raulamo-Jurvanen et al.~\cite{raulamo2017choosing}, que empregaram literatura cinza para mapear ferramentas preferidas na indústria. Dialoga também com Borges e Valente~\cite{borges2018star} sobre limites da popularidade em repositórios.
+
+Como avanço metodológico, este artigo estratifica as ocorrências em três níveis de evidência e isola \textit{frameworks} de SUT dos instrumentos de verificação~\cite{kalliamvakou2014promises}.
 
 % ============================================================
 \section{Conclusão}
 \label{sec:conclusao}
 % ============================================================
 
-Este artigo investigou como a comunidade testa sistemas RAG e agentes de LLM sobre 16.836 itens, 6.737 repositórios e 10.123 unidades. Mesmo isolando repositórios mantenedores, discurso e prática externa exibem concordância moderada ($\tau_b = 0{,}54$ em N1 $\times$ N3; $0{,}56$ em N2 $\times$ N3), não sustentando P1, com liderança externa em CI de \textit{promptfoo}, LangSmith, SWE-bench e Langfuse.
+Este artigo investigou como a comunidade testa sistemas RAG e agentes de LLM sobre 16.642 itens, 6.868 repositórios enriquecidos e 10.267 unidades analíticas.
 
-Nos métodos e oráculos, juízes de LLM lideram isoladamente, mas oráculos de referência superam os pseudoautomáticos em cobertura. Na QP3 sobre 7.339 itens elegíveis, engajamento não prediz adoção ($\rho = -0{,}21$, sustentando P2), enquanto agentes superam RAG no modelo ajustado ($p = 0{,}044$) e relatos de falha somam 2.505 registros.
+Isolando organizações mantenedoras e restringindo N3 a passos executáveis de CI em projetos sustentados, discurso e prática externa divergem e sustentam P1 ($\tau_b = 0{,}41$ na amostra e $\tau_{\text{pond}} = 0{,}46$ ponderado), com liderança de \textit{promptfoo} (29), \textit{garak} (12), DeepEval (10) e Inspect AI (9).
 
-Como trabalho futuro imediato, resta concluir a triagem em duas trilhas e a dupla codificação manual dos 16.836 itens para avaliar a hipótese H2 e responder qualitativamente à QP4. Essa etapa também resolverá as detecções sem rótulo de paradigma na QP5 e validará manualmente os 114 termos candidatos descobertos.
+Nos métodos e oráculos, juízes de LLM lideram isoladamente (692), mas oráculos de referência superam os pseudoautomáticos em cobertura (55,9\% contra 52,6\%).
+
+Na QP3 sobre 7.316 itens elegíveis, engajamento médio não prediz adoção em CI ($\rho = -0{,}09$; $\rho_{\text{pond}} = 0{,}17$, sustentando P2). Agentes superam RAG no modelo ajustado ($\beta = 0{,}025$; $p = 0{,}016$, sustentando P3), e relatos de falha somam 2.518 registros.
+
+Como trabalho futuro imediato, resta concluir a validação da amostra de precisão (200 detecções), a triagem em duas trilhas e a dupla codificação manual dos 16.642 itens.
+
+Essa etapa avaliará a hipótese H2 e responderá qualitativamente à QP4. Permitirá ainda resolver as detecções sem rótulo de paradigma na QP5 e validar manualmente os 107 termos candidatos descobertos.
 
 \section*{Disponibilidade de Artefatos}
 
-O protocolo, os Registros de Decisão Arquitetural (\textit{Architectural Decision Records} -- ADRs), o catálogo de ferramentas e o roteiro de análise (\path{analysis/artigo2.py}) residem no repositório oficial\footnote{\url{https://github.com/Icar0S/Miner-Tests-Agents-Rag}} sob licença Apache-2.0~\cite{msrkit2027}. O pacote de reprodução do \textit{corpus} será depositado no Zenodo\footnote{\url{https://zenodo.org}} sob licença Creative Commons Atribuição 4.0 Internacional (CC BY 4.0) com metadados, URLs e identificadores pseudonimizados, preservando textos integrais apenas quando permitido na origem.
+O protocolo, os Registros de Decisão Arquitetural (\textit{Architectural Decision Records} -- ADRs), o catálogo de ferramentas e o roteiro de análise (\path{analysis/artigo2.py}) residem no repositório oficial\footnote{\url{https://github.com/Icar0S/Miner-Tests-Agents-Rag}} sob licença Apache-2.0~\cite{msrkit2027}.
+
+O pacote de reprodução do \textit{corpus} será depositado no Zenodo\footnote{\url{https://zenodo.org}} sob licença Creative Commons Atribuição 4.0 Internacional (CC BY 4.0) com metadados, URLs e identificadores pseudonimizados, preservando textos integrais apenas quando permitido na origem.
 
 \section*{Agradecimentos}
 % TODO: agradecimentos (bolsas, laboratório, disciplina). Verificar a política

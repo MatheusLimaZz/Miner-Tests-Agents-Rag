@@ -9,7 +9,15 @@ from typer.testing import CliRunner
 
 from msrkit.cli import app
 from msrkit.enrich import RepoSignals
-from msrkit.extract import Detection, Extractor, dependency_names, summarize
+from msrkit.extract import (
+    Extractor,
+    dependency_names,
+    executable_lines,
+    installs,
+    parse_manifest,
+    summarize,
+    workflow_steps,
+)
 from msrkit.gazetteer import Gazetteer
 from msrkit.models import Item, ItemKind, Provenance
 from msrkit.storage import ItemStorage
@@ -80,13 +88,22 @@ def _item(
     return it
 
 
-def _sig(months: int, contributors: int, workflows: dict[str, str] | None = None) -> RepoSignals:
-    if workflows is None:
-        workflows = {".github/workflows/eval.yml": "steps:\n  - run: npx promptfoo eval -c x\n"}
+def _workflow(*runs: str, uses: str | None = None, head: str = "") -> str:
+    """A minimal GitHub Actions workflow with one job (scripts as block scalars)."""
+    steps = "".join(f"      - run: |\n          {r}\n" for r in runs)
+    if uses:
+        steps += f"      - uses: {uses}\n"
+    return (
+        f"{head}name: CI\non: [push]\njobs:\n  test:\n    runs-on: ubuntu-latest\n"
+        f"    steps:\n{steps}"
+    )
+
+
+def _sig(months: int, contributors: int) -> RepoSignals:
     return RepoSignals(
         repo="acme/rag",
         has_ci=True,
-        workflows=workflows,
+        workflows={".github/workflows/eval.yml": _workflow("npx promptfoo eval -c x")},
         manifests={"requirements.txt": "ragas==0.2.1\nnumpy\n"},
         config_paths=["promptfooconfig.yaml"],
         contributors=contributors,
@@ -245,34 +262,103 @@ class TestDisambiguation:
         assert {d.entry_id for d in ex.from_item(it)} == {"deepeval"}
 
 
-class TestCiCodeHits:
-    """CI workflow hits from `{anchor} path:.github/workflows` queries (ADR-045)."""
+WF = ".github/workflows/eval.yml"
 
-    def _hit(self) -> Item:
+
+def _app_sig(
+    workflow: str, months: int = 3, contributors: int = 4, **fields: object
+) -> RepoSignals:
+    return RepoSignals(
+        repo="acme/app",
+        has_ci=True,
+        workflows={WF: workflow},
+        contributors=contributors,
+        commit_months=[f"2024-0{i + 1}" for i in range(months)],
+        **fields,  # type: ignore[arg-type]
+    )
+
+
+class TestCiCodeHits:
+    """A workflow hit of a CI query counts only when a step names the tool (ADR-056)."""
+
+    def _hit(self, query: str = "kind:code deepeval path:.github/workflows language:YAML") -> Item:
         return _item(
-            "https://github.com/acme/app/blob/main/.github/workflows/eval.yml",
-            kind=ItemKind.CODE,
-            query="deepeval path:.github/workflows language:YAML",
-            path=".github/workflows/eval.yml",
+            f"https://github.com/acme/app/blob/main/{WF}", kind=ItemKind.CODE, query=query, path=WF
         )
 
-    def test_workflow_hit_is_a_ci_signal(self) -> None:
-        dets = Extractor(GAZ).run([self._hit()], {})
-        ci = [d for d in dets if d.signal == "ci"]
-        assert [(d.entry_id, d.level) for d in ci] == [("deepeval", "N2")]
+    def _ci(self, dets: list) -> list[tuple[str, str, str]]:
+        return [(d.entry_id, d.level, d.item_id) for d in dets if d.signal == "ci"]
 
-    def test_promoted_to_n3_when_adoption_is_sustained(self) -> None:
-        signals = {"acme/app": _sig(months=3, contributors=4, workflows={})}
-        dets = Extractor(GAZ).run([self._hit()], signals)
-        assert ("deepeval", "N3") in {(d.entry_id, d.level) for d in dets if d.signal == "ci"}
-        thin = {"acme/app": _sig(months=1, contributors=1, workflows={})}
-        dets = Extractor(GAZ).run([self._hit()], thin)
-        assert {d.level for d in dets if d.signal == "ci"} == {"N2"}
+    def test_a_hit_without_the_workflow_content_is_not_a_ci_signal(self) -> None:
+        ex = Extractor(GAZ)
+        assert self._ci(ex.run([self._hit()], {})) == []
+        assert ex.stats["ci_hits_unverified"] == 1
 
-    def test_promoted_to_n3_with_mixed_case_signals_repo(self) -> None:
-        signals = {"Acme/App": _sig(months=3, contributors=4, workflows={})}
-        dets = Extractor(GAZ).run([self._hit()], signals)
-        assert ("deepeval", "N3") in {(d.entry_id, d.level) for d in dets if d.signal == "ci"}
+    def test_a_step_that_runs_the_tool_is_ci_on_the_hit_item(self) -> None:
+        hit = self._hit()
+        ex = Extractor(GAZ)
+        dets = ex.run([hit], {"acme/app": _app_sig(_workflow("deepeval test run tests/"))})
+        assert self._ci(dets) == [("deepeval", "N3", hit.id)]
+        ci = next(d for d in dets if d.signal == "ci")
+        assert ci.location == WF and ci.evidence == "run: deepeval test run tests/"
+        assert ex.stats["ci_hits_verified"] == 1
+        thin = {"acme/app": _app_sig(_workflow("deepeval test run tests/"), 1, 1)}
+        assert self._ci(Extractor(GAZ).run([hit], thin)) == [("deepeval", "N2", hit.id)]
+
+    def test_the_name_outside_an_executable_step_is_rejected(self) -> None:
+        text = (
+            "# runs deepeval nightly\n"
+            "name: DeepEval evaluation\n"
+            "on: [push]\n"
+            "env:\n  DEEPEVAL_TELEMETRY_OPT_OUT: 'YES'\n"
+            "jobs:\n  deepeval:\n    name: deepeval gate\n    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - name: Run deepeval\n"
+            "        run: |\n"
+            "          # deepeval test run comes later\n"
+            "          pytest tests/\n"
+            "      - uses: actions/upload-artifact@v4\n"
+            "        with:\n          name: deepeval-report\n          path: deepeval/\n"
+        )
+        ex = Extractor(GAZ)
+        assert self._ci(ex.run([self._hit()], {"acme/app": _app_sig(text)})) == []
+        assert ex.stats["ci_hits_rejected"] == 1 and ex.stats["ci_hits_verified"] == 0
+
+    def test_the_name_only_in_the_file_name_is_rejected(self) -> None:
+        path = ".github/workflows/deepeval-bench.yml"
+        hit = _item(
+            f"https://github.com/acme/app/blob/main/{path}",
+            kind=ItemKind.CODE,
+            query="kind:code deepeval path:.github/workflows language:YAML",
+            path=path,
+        )
+        sig = RepoSignals(repo="acme/app", workflows={path: _workflow("pytest -q")})
+        ex = Extractor(GAZ)
+        assert self._ci(ex.run([hit], {"acme/app": sig})) == []
+        assert ex.stats["ci_hits_rejected"] == 1
+
+    def test_signals_filed_under_another_case_are_found(self) -> None:
+        hit = self._hit()
+        dets = Extractor(GAZ).run([hit], {"Acme/App": _app_sig(_workflow("deepeval test run"))})
+        assert self._ci(dets) == [("deepeval", "N3", hit.id)]
+        assert {d.repo for d in dets} == {"acme/app"}
+
+    def test_a_workflow_the_search_did_not_return_counts_on_the_repository(self) -> None:
+        repo_item = _item("https://github.com/acme/app")
+        dets = Extractor(GAZ).run(
+            [repo_item], {"acme/app": _app_sig(_workflow("npx promptfoo@latest eval"))}
+        )
+        assert self._ci(dets) == [("promptfoo", "N3", repo_item.id)]
+
+    def test_an_import_hit_never_becomes_n3(self) -> None:
+        hit = _item(
+            "https://github.com/acme/app/blob/main/tests/test_x.py",
+            kind=ItemKind.CODE,
+            query='kind:code "from ragas import" language:Python',
+            path="tests/test_x.py",
+        )
+        dets = Extractor(GAZ).run([hit], {"acme/app": _app_sig(_workflow("pytest -q"))})
+        assert [(d.entry_id, d.signal, d.level) for d in dets] == [("ragas", "import", "N2")]
 
     def test_non_workflow_code_hit_is_not_ci(self) -> None:
         hit = _item(
@@ -282,6 +368,346 @@ class TestCiCodeHits:
             path="src/x.py",
         )
         assert not [d for d in Extractor(GAZ).run([hit], {}) if d.signal == "ci"]
+
+
+class TestWorkflowSteps:
+    """Only `run:` scripts and `uses:` references are executable."""
+
+    def test_steps_and_reusable_workflows(self) -> None:
+        text = (
+            "on: [push]\n"
+            "jobs:\n"
+            "  call:\n    uses: org/repo/.github/workflows/eval.yml@main\n"
+            "  test:\n    steps:\n"
+            "      - name: checkout\n        uses: actions/checkout@v4\n"
+            "      - run: |\n          pip install ragas \\\n            pytest\n"
+            "          # a comment\n          pytest -q\n"
+        )
+        steps = workflow_steps(text)
+        assert steps is not None
+        assert [(s.kind, s.text) for s in steps if s.kind == "uses"] == [
+            ("uses", "org/repo/.github/workflows/eval.yml@main"),
+            ("uses", "actions/checkout@v4"),
+        ]
+        lines = [line for kind, line in executable_lines(steps) if kind == "run"]
+        assert len(lines) == 2 and lines[1] == "pytest -q"  # continuation joined, comment dropped
+        assert lines[0].startswith("pip install ragas") and lines[0].endswith("pytest")
+
+    def test_invalid_or_empty_files_have_no_steps(self) -> None:
+        assert workflow_steps("jobs:\n  a:\n   steps: [\n") is None
+        assert workflow_steps("just a string") is None
+        assert workflow_steps("on: push\n") == []
+        ex = Extractor(GAZ)
+        sig = RepoSignals(repo="acme/app", workflows={WF: "jobs:\n  a:\n   steps: [\n"})
+        assert ex.ci_matches(sig) == {} and ex.stats["workflows_invalid_yaml"] == 1
+
+
+class TestCiNames:
+    """How a step may name a tool: CLI, `python -m`, or the anchor token, with word edges."""
+
+    GAZ_CI = Gazetteer.model_validate(
+        {
+            "version": "t",
+            "tools": [
+                {"id": "inspect-ai", "name": "Inspect AI", "family": "eval",
+                 "python_imports": ["inspect_ai"], "cli": ["inspect eval"],
+                 "search_token": "inspect_ai"},
+                {"id": "pyrit", "name": "PyRIT", "family": "sec", "python_imports": ["pyrit"]},
+                {"id": "webarena", "name": "WebArena", "family": "agents"},
+                {"id": "mteb", "name": "MTEB", "family": "ir", "python_imports": ["mteb"]},
+                {"id": "promptfoo", "name": "promptfoo", "family": "eval",
+                 "cli": ["promptfoo eval", "npx promptfoo"], "repos": ["promptfoo/promptfoo"]},
+                {"id": "lm-eval-harness", "name": "lm-evaluation-harness", "family": "eval",
+                 "python_imports": ["lm_eval"], "cli": ["lm_eval"], "search_token": "lm_eval"},
+                {"id": "langchain", "name": "LangChain", "family": "framework-sut",
+                 "python_imports": ["langchain"], "anchor": False},
+            ],
+        }
+    )  # fmt: skip
+
+    def _found(self, *runs: str, uses: str | None = None) -> set[str]:
+        sig = RepoSignals(repo="acme/app", workflows={WF: _workflow(*runs, uses=uses)})
+        return set(Extractor(self.GAZ_CI).ci_matches(sig)[WF])
+
+    def test_separators_are_interchangeable(self) -> None:
+        assert self._found("pip install inspect-ai==0.3.255") == {"inspect-ai"}
+        assert self._found("uv run inspect eval tasks/x.py --model m") == {"inspect-ai"}
+        assert self._found("python3.11 -m lm_eval --tasks hellaswag") == {"lm-eval-harness"}
+        assert self._found("pip install lm-eval") == {"lm-eval-harness"}
+
+    def test_longer_words_that_contain_the_name_do_not_match(self) -> None:
+        assert self._found("curl https://ci.example/job/pyrite-dev/lastBuild") == set()
+        assert self._found("agbenchmark --test=WebArenaTask_0") == set()
+        assert self._found('[[ "$V" == mteb-amazon_polarity-s42 ]]') == set()
+        assert self._found("python run_mteb.py", "pytest tests/test_pyrit_utils.py") == set()
+
+    def test_actions_and_commands_match(self) -> None:
+        assert self._found(uses="promptfoo/promptfoo-action@v1") == {"promptfoo"}
+        assert self._found("npx promptfoo@latest eval -c cfg.yaml") == {"promptfoo"}
+        assert self._found("python -m pyrit.cli scan", "mteb run -m model") == {"pyrit", "mteb"}
+
+    def test_frameworks_need_a_command_not_just_their_name(self) -> None:
+        assert self._found("pytest tests/langchain/ --tb=short") == set()
+        assert self._found("python -m langchain serve") == {"langchain"}
+
+
+class TestCiForms:
+    """What counts as invoking a tool in a step, and how strong the evidence is (ADR-056)."""
+
+    GAZ_FORMS = Gazetteer.model_validate(
+        {
+            "version": "t",
+            "tools": [
+                {"id": "ragas", "name": "Ragas", "family": "eval", "python_imports": ["ragas"],
+                 "packages": ["ragas"], "repos": ["vibrantlabsai/ragas"]},
+                {"id": "ranx", "name": "ranx", "family": "ir", "python_imports": ["ranx"],
+                 "packages": ["ranx"], "repos": ["AmenRa/ranx"], "ambiguous": True},
+                {"id": "openai-evals", "name": "OpenAI Evals", "family": "eval",
+                 "packages": ["evals"], "cli": ["oaieval"], "search_token": "oaieval"},
+                {"id": "langsmith", "name": "LangSmith", "family": "tracing",
+                 "packages": ["langsmith"]},
+                {"id": "tau-bench", "name": "tau-bench", "family": "agents",
+                 "repos": ["sierra-research/tau-bench"]},
+                {"id": "langchain", "name": "LangChain", "family": "framework-sut",
+                 "packages": ["langchain"], "anchor": False},
+                {"id": "lm-eval-harness", "name": "lm-evaluation-harness", "family": "eval",
+                 "python_imports": ["lm_eval"], "packages": ["lm_eval", "lm-eval"],
+                 "cli": ["lm_eval"], "search_token": "lm_eval"},
+                {"id": "garak", "name": "garak", "family": "sec", "packages": ["garak"],
+                 "cli": ["garak"]},
+                {"id": "promptfoo", "name": "promptfoo", "family": "eval",
+                 "packages": ["promptfoo"], "cli": ["promptfoo eval", "npx promptfoo"],
+                 "repos": ["promptfoo/promptfoo"]},
+            ],
+        }
+    )  # fmt: skip
+
+    def _hits(self, *runs: str, uses: str | None = None) -> dict[str, str]:
+        sig = RepoSignals(repo="acme/app", workflows={WF: _workflow(*runs, uses=uses)})
+        found = Extractor(self.GAZ_FORMS).ci_matches(sig)[WF]
+        return {tool: hit.form for tool, hit in found.items()}
+
+    def test_a_command_counts_where_a_command_goes(self) -> None:
+        assert self._hits("uv run --frozen lm_eval --tasks hellaswag") == {"lm-eval-harness": "cli"}
+        assert self._hits("FOO=1 garak --list-probes || true") == {"garak": "cli"}
+        assert self._hits("RESULT=$(garak --version)", "echo done") == {"garak": "cli"}
+        assert self._hits("make lint && npx --yes promptfoo eval -c x.yaml") == {"promptfoo": "cli"}
+        # the same word as an argument is not a call of the command
+        assert self._hits("flake8 lm_eval.py sudoku.py") == {"lm-eval-harness": "name"}
+        assert self._hits("helm template lm-eval charts/svc") == {"lm-eval-harness": "name"}
+        assert self._hits("pip install garak pytest") == {"garak": "install"}
+
+    def test_an_action_of_the_tools_organization_is_the_tool(self) -> None:
+        assert self._hits(uses="promptfoo/promptfoo-action@v1") == {"promptfoo": "uses"}
+        assert self._hits(uses="promptfoo/promptfoo/.github/actions/x@main") == {
+            "promptfoo": "uses"
+        }
+        # a third party's action, or a local workflow file, only carries the name
+        assert self._hits(uses="someone/promptfoo@v2") == {"promptfoo": "name"}
+        assert self._hits(uses="./.github/workflows/promptfoo.yml") == {"promptfoo": "name"}
+        # another product of the organization, or a longer word, is not the tool
+        assert self._hits(uses="promptfoo/code-scan-action@v1") == {}
+        assert self._hits(uses="someone/run-promptfoo@v2") == {}
+
+    def test_the_bare_name_supports_n2_and_never_n3(self) -> None:
+        repo_item = _item("https://github.com/acme/app")
+
+        def level(*runs: str) -> list[tuple[str, str]]:
+            sig = _app_sig(_workflow(*runs), months=6, contributors=9)
+            dets = Extractor(self.GAZ_FORMS).run([repo_item], {"acme/app": sig})
+            return [(d.via, d.level) for d in dets if d.signal == "ci"]
+
+        assert level("pytest tests/ragas/ -q") == [("name", "N2")]
+        assert level("pip install ragas") == [("install", "N3")]
+        assert level("garak --model_type test") == [("cli", "N3")]
+
+    def test_a_name_that_is_only_printed_is_not_an_invocation(self) -> None:
+        assert self._hits('echo "=== Running RAGAS evaluation ==="') == {}
+        assert self._hits("print('ragas coverage')", '"ragas",') == {}
+        # ...but the command after the message still counts
+        assert self._hits('echo "installing" && pip install ragas') == {"ragas": "install"}
+
+    def test_what_a_test_run_leaves_out_is_not_an_invocation(self) -> None:
+        assert self._hits("uv run pytest tests/ -p no:langsmith -p no:anyio") == {}
+        assert self._hits('pytest -m "not ragas and not slow" --tb=short') == {}
+        assert self._hits("pytest --ignore=tests/ragas -q") == {}
+
+    def test_the_strongest_form_in_the_workflow_is_reported(self) -> None:
+        assert self._hits("pytest tests/ragas/ -q") == {"ragas": "name"}
+        assert self._hits("pytest tests/ragas/ -q", "pip install ragas") == {"ragas": "install"}
+        assert self._hits("pip install ragas", 'python -c "import numpy, ragas"') == {
+            "ragas": "module"
+        }
+        assert self._hits("pip install ragas", uses="vibrantlabsai/ragas/.github/actions/x@v1") == {
+            "ragas": "uses"
+        }
+        assert self._hits("oaieval gpt-4 my-eval") == {"openai-evals": "cli"}
+
+    def test_a_name_shared_with_other_software_needs_a_strong_form(self) -> None:
+        assert self._hits("apptainer exec docker://someone/ranx:latest myst build") == {}
+        assert self._hits("pytest tests/ranx/") == {}
+        assert self._hits("pip install numpy ranx tqdm") == {"ranx": "install"}
+        assert self._hits('python3 -c "import ranx, scipy"') == {"ranx": "module"}
+        assert self._hits(uses="AmenRa/ranx/.github/workflows/ci.yml@main") == {"ranx": "uses"}
+
+    def test_frameworks_follow_the_same_forms_without_the_bare_name(self) -> None:
+        assert self._hits("pip install langchain") == {"langchain": "install"}
+        assert self._hits("pytest tests/langchain/") == {}
+
+    def test_only_what_a_package_manager_installs_is_an_install(self) -> None:
+        def names(*lines: str) -> set[str]:
+            return set(installs(list(lines)).packages)
+
+        assert names("pip install evals") == {"evals"}
+        # a group, an extra or a script named like a package installs no such package
+        assert names("uv sync --extra evals --group ragas") == set()
+        assert names('pip install -e ".[dev,evals]"') == set()
+        assert names("npm run evals", "poetry install --with evals") == set()
+        assert names("pip install -r requirements.txt --upgrade 'ragas[all]>=0.2'") == {"ragas"}
+        assert names("conda install -y -c conda-forge ragas") == {"ragas"}
+        assert names("uv run --with ragas pytest -q") == {"ragas"}
+        assert names("uvx --from inspect-ai inspect eval task.py") == {"inspect-ai", "inspect"}
+        assert names("npx --yes promptfoo@latest eval -c x.yaml") == {"promptfoo"}
+        assert names("npm install --save-dev @langfuse/client langfuse") == {
+            "@langfuse/client",
+            "langfuse",
+        }
+        assert names("python -m pip install deepeval && pipx run garak --help") == {
+            "deepeval",
+            "garak",
+        }
+        found = installs(
+            [
+                'pip install "lm_eval @ git+https://github.com/EleutherAI/lm-evaluation-harness.git"',
+                "pip install git+https://github.com/sierra-research/tau-bench",
+            ]
+        )
+        assert "lm-eval" in found.packages
+        assert set(found.repos) == {"eleutherai/lm-evaluation-harness", "sierra-research/tau-bench"}
+        assert self._hits("pip install git+https://github.com/sierra-research/tau-bench") == {
+            "tau-bench": "install"
+        }
+
+    def test_the_form_is_kept_on_the_detection(self) -> None:
+        repo_item = _item("https://github.com/acme/app")
+        sig = _app_sig(_workflow("pip install ragas", "pytest tests/langsmith/"))
+        dets = Extractor(self.GAZ_FORMS).run([repo_item], {"acme/app": sig})
+        assert {(d.entry_id, d.via) for d in dets if d.signal == "ci"} == {
+            ("ragas", "install"),
+            ("langsmith", "name"),
+        }
+        assert all(d.via == "" for d in dets if d.signal != "ci")
+
+
+class TestRepositorySignalsStayOnArtifacts:
+    """Signals read from the repository are never attached to an issue (ADR-056)."""
+
+    def test_a_repository_known_only_through_issues_gets_no_structural_detection(self) -> None:
+        issue = _item("https://github.com/acme/rag/issues/7", ItemKind.ISSUE, title="Ragas fails")
+        ex = Extractor(GAZ)
+        dets = ex.run([issue], {"acme/rag": _sig(3, 4)})
+        assert [(d.entry_id, d.signal, d.level) for d in dets] == [("ragas", "text", "N1")]
+        assert ex.stats["repos_without_artifact_item"] == 1
+
+    def test_a_code_hit_stands_for_the_repository_when_there_is_no_repository_item(self) -> None:
+        issue = _item("https://github.com/acme/rag/issues/7", ItemKind.ISSUE, title="Ragas fails")
+        code = _item(
+            "https://github.com/acme/rag/blob/main/tests/test_x.py",
+            ItemKind.CODE,
+            title="test_x.py",
+            path="tests/test_x.py",
+        )
+        dets = Extractor(GAZ).run([issue, code], {"acme/rag": _sig(3, 4)})
+        structural = [d for d in dets if d.signal != "text"]
+        assert structural and {d.item_id for d in structural} == {code.id}
+        assert issue.id not in {d.item_id for d in structural}
+
+    def test_the_repository_item_is_preferred_over_a_code_hit(self) -> None:
+        code = _item(
+            "https://github.com/acme/rag/blob/main/tests/test_x.py",
+            ItemKind.CODE,
+            title="test_x.py",
+            path="tests/test_x.py",
+        )
+        repo_item = _item("https://github.com/acme/rag")
+        dets = Extractor(GAZ).run([code, repo_item], {"acme/rag": _sig(3, 4)})
+        assert {d.item_id for d in dets if d.signal == "dependency"} == {repo_item.id}
+
+
+class TestManifests:
+    """Only declared requirements are dependencies; the project's own name is not one."""
+
+    def test_project_metadata_is_not_a_dependency(self) -> None:
+        text = (
+            '[project]\nname = "ragas"\ndescription = "like deepeval"\n'
+            'keywords = ["promptfoo", "ragas"]\ndependencies = ["numpy>=1"]\n'
+            '[project.scripts]\ndeepeval = "pkg.cli:main"\n'
+            '[tool.mypy]\nfiles = ["src", "promptfoo"]\n'
+        )
+        info = parse_manifest("pyproject.toml", text)
+        assert set(info.dependencies) == {"numpy"}
+        assert info.names == {"ragas"}
+
+    def test_groups_are_read_and_their_names_are_not_packages(self) -> None:
+        text = (
+            '[project]\nname = "app"\ndependencies = ["ragas[all]>=0.2 ; python_version>\'3.9\'"]\n'
+            '[project.optional-dependencies]\nevals = ["deepeval"]\n'
+            '[dependency-groups]\ndev = ["pytest", {include-group = "evals"}]\n'
+            '[tool.poetry.dependencies]\npython = "^3.11"\npromptfoo = {version = "^1"}\n'
+            '[tool.poetry.group.test.dependencies]\ngarak = "^0.9"\n'
+            '[tool.uv]\ndev-dependencies = ["opik"]\n'
+        )
+        deps = set(parse_manifest("pyproject.toml", text).dependencies)
+        assert deps == {"ragas", "deepeval", "pytest", "promptfoo", "garak", "opik"}
+        assert "evals" not in deps and "python" not in deps
+
+    def test_invalid_toml_falls_back_to_quoted_requirements(self) -> None:
+        text = '[project\nname = "ragas"\ndependencies = [\n  "deepeval>=1",\n]\n'
+        info = parse_manifest("pyproject.toml", text)
+        assert set(info.dependencies) == {"deepeval"} and info.names == {"ragas"}
+
+    def test_setup_py_and_setup_cfg(self) -> None:
+        setup_py = (
+            "setup(\n    name='irkit',\n    keywords=['ragas'],\n"
+            "    install_requires=['ir-measures[pytrec_eval]', 'numpy'],\n"
+            "    extras_require={'ragas': ['deepeval>=1'], 'dev': DEV},\n)\n"
+        )
+        info = parse_manifest("setup.py", setup_py)
+        assert set(info.dependencies) == {"ir-measures", "numpy", "deepeval"}
+        assert info.names == {"irkit"}
+        setup_cfg = (
+            "[metadata]\nname = promptfoo\n[options]\ninstall_requires =\n    ragas>=0.1\n"
+            "    numpy; python_version<'3.12'\n[options.extras_require]\nevals =\n    deepeval\n"
+        )
+        info = parse_manifest("setup.cfg", setup_cfg)
+        assert set(info.dependencies) == {"ragas", "numpy", "deepeval"}
+        assert info.names == {"promptfoo"}
+
+    def test_package_json_name_and_dependencies(self) -> None:
+        info = parse_manifest(
+            "package.json", '{"name": "promptfoo", "optionalDependencies": {"langfuse": "^3"}}'
+        )
+        assert set(info.dependencies) == {"langfuse"} and info.names == {"promptfoo"}
+        assert parse_manifest("package.json", "[1, 2]").dependencies == {}
+
+    def test_a_copy_of_the_tool_is_not_a_user_of_it(self) -> None:
+        """A fork keeps the tool's package name, manifests and workflows."""
+        fork = _item("https://github.com/someone/promptfoo-fork")
+        sig = RepoSignals(
+            repo="someone/promptfoo-fork",
+            workflows={WF: _workflow("npx promptfoo eval", "pip install ragas")},
+            manifests={
+                "package.json": '{"name": "promptfoo", "dependencies": {"promptfoo": "*"}}',
+                "requirements.txt": "ragas\n",
+            },
+            config_paths=["promptfooconfig.yaml"],
+            contributors=9,
+            commit_months=["2024-01", "2024-02"],
+        )
+        ex = Extractor(GAZ)
+        dets = ex.run([fork], {"someone/promptfoo-fork": sig})
+        assert {d.entry_id for d in dets} == {"ragas"}  # the other tools it uses still count
+        assert ex.stats["self_copies"] == 1
 
 
 def test_enrich_priority_puts_ci_and_code_hits_first() -> None:
@@ -295,270 +721,3 @@ def test_enrich_priority_puts_ci_and_code_hits_first() -> None:
               path=".github/workflows/t.yml"),
     ]  # fmt: skip
     assert enrich_priority(items) == ["d/ci", "c/code", "b/repo", "a/issues-only"]
-
-
-def test_from_repo_prefers_code_over_issue_regardless_of_order() -> None:
-    issue_item = _item("https://github.com/acme/app/issues/42", kind=ItemKind.ISSUE)
-    code_item = _item(
-        "https://github.com/acme/app/blob/main/eval.py",
-        kind=ItemKind.CODE,
-        path="eval.py",
-    )
-    sig = RepoSignals(
-        repo="acme/app",
-        has_ci=True,
-        workflows={".github/workflows/eval.yml": "steps:\n  - run: promptfoo eval\n"},
-        manifests={"requirements.txt": "ragas==0.2.1\n"},
-        contributors=2,
-        commit_months=["2024-01"],
-    )
-    dets = Extractor(GAZ).run([issue_item, code_item], {"acme/app": sig})
-    repo_dets = [d for d in dets if d.signal in {"ci", "dependency"}]
-    assert repo_dets, "Expected from_repo detections (ci, dependency)"
-    assert all(d.item_id == code_item.id for d in repo_dets)
-    assert not any(d.item_id == issue_item.id for d in repo_dets)
-
-
-def test_from_repo_never_attaches_to_issue_only_repo() -> None:
-    issue_item = _item(
-        "https://github.com/NVIDIA/garak/issues/100",
-        kind=ItemKind.ISSUE,
-        title="Issue mentioning ragas",
-    )
-    sig = RepoSignals(
-        repo="NVIDIA/garak",
-        has_ci=True,
-        workflows={".github/workflows/eval.yml": "steps:\n  - run: promptfoo eval\n"},
-        manifests={"pyproject.toml": '[project]\ndependencies = ["ragas"]\n'},
-        config_paths=["promptfooconfig.yaml"],
-        contributors=3,
-        commit_months=["2024-01"],
-    )
-    dets = Extractor(GAZ).run([issue_item], {"NVIDIA/garak": sig})
-    structural_dets = [d for d in dets if d.signal in {"ci", "dependency", "config"}]
-    assert not structural_dets
-    assert all(d.signal == "text" for d in dets)
-    assert any(d.item_id == issue_item.id and d.signal == "text" for d in dets)
-
-
-def test_dependency_parsing_regression() -> None:
-    content = """
-[project]
-name = "ragas"
-keywords = ["ragas", "evals"]
-dependencies = [
-    "ragas>=0.1",
-    "deep_eval[x]==1"
-]
-
-[project.optional-dependencies]
-evals = ["pytest"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-"""
-    deps = dependency_names("pyproject.toml", content)
-    assert "ragas" in deps
-    assert "deep-eval" in deps
-    assert "pytest" in deps
-    assert "evals" not in deps
-    assert "tests" not in deps
-
-    cfg_content = """
-[options]
-install_requires =
-    ragas >= 0.1
-    numpy
-[options.extras_require]
-test =
-    deepeval >= 1.0
-"""
-    cfg_deps = dependency_names("setup.cfg", cfg_content)
-    assert "ragas" in cfg_deps
-    assert "numpy" in cfg_deps
-    assert "deepeval" in cfg_deps
-    assert "test" not in cfg_deps
-
-    req_content = "git+https://github.com/vibrantlabsai/ragas.git\n"
-    req_deps = dependency_names("requirements.txt", req_content)
-    assert "ragas" in req_deps
-    assert "git" not in req_deps
-    assert "https" not in req_deps
-
-
-def test_ci_workflow_parsing_regression() -> None:
-    gaz = Gazetteer.model_validate(
-        {
-            "version": "t",
-            "tools": [
-                {
-                    "id": "garak",
-                    "name": "garak",
-                    "family": "sec",
-                    "cli": ["garak"],
-                    "python_imports": ["garak"],
-                },
-                {
-                    "id": "promptfoo",
-                    "name": "promptfoo",
-                    "family": "eval",
-                    "cli": ["promptfoo eval"],
-                },
-            ],
-        }
-    )
-    repo_item = _item("https://github.com/acme/rag")
-
-    negative_yaml = """
-# promptfoo eval comment
-name: Promptfoo Eval
-on: [push]
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    env:
-      RAGAS_DO_NOT_TRACK: 'true'
-    steps:
-      - run: echo garak
-      - run: pip install garak
-"""
-    sig_neg = RepoSignals(
-        repo="acme/rag",
-        has_ci=True,
-        workflows={".github/workflows/ci.yml": negative_yaml},
-        contributors=3,
-        commit_months=["2024-01", "2024-02"],
-    )
-    dets_neg = Extractor(gaz).from_repo(sig_neg, repo_item)
-    ci_neg = [d for d in dets_neg if d.signal == "ci"]
-    assert not ci_neg
-
-    positive_yaml = """
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - run: garak --model_type test
-      - run: |
-          echo "running evals"
-          npx promptfoo eval -c config.yaml
-"""
-    sig_pos = RepoSignals(
-        repo="acme/rag",
-        has_ci=True,
-        workflows={".github/workflows/ci.yml": positive_yaml},
-        contributors=3,
-        commit_months=["2024-01", "2024-02"],
-    )
-    dets_pos = Extractor(gaz).from_repo(sig_pos, repo_item)
-    ci_pos = [d for d in dets_pos if d.signal == "ci"]
-    assert {d.entry_id for d in ci_pos} == {"garak", "promptfoo"}
-    assert all(d.level == "N3" for d in ci_pos)
-
-
-def test_from_code_hit_no_hallucination_when_workflows_enriched() -> None:
-    code_hit = _item(
-        "https://github.com/acme/rag/blob/main/.github/workflows/clang_format.yml",
-        kind=ItemKind.CODE,
-        query="deepeval path:.github/workflows language:YAML",
-        path=".github/workflows/clang_format.yml",
-    )
-    sig = RepoSignals(
-        repo="acme/rag",
-        has_ci=True,
-        workflows={
-            ".github/workflows/clang_format.yml": "steps:\n  - run: clang-format --dry-run\n"
-        },
-        contributors=3,
-        commit_months=["2024-01", "2024-02"],
-    )
-    dets = Extractor(GAZ).run([code_hit], {"acme/rag": sig})
-    ci_dets = [d for d in dets if d.signal == "ci"]
-    assert not ci_dets, f"Expected zero CI detections, got {ci_dets}"
-
-
-def test_ambiguous_method_disambiguation() -> None:
-    gaz = Gazetteer.model_validate(
-        {
-            "version": "t",
-            "tools": [],
-            "methods": [
-                {
-                    "id": "exact-match",
-                    "name": "exact match",
-                    "aliases": ["exact match"],
-                    "ambiguous": True,
-                },
-                {
-                    "id": "human-evaluation",
-                    "name": "human evaluation",
-                    "aliases": ["manual review"],
-                    "ambiguous": True,
-                },
-            ],
-        }
-    )
-    ex = Extractor(gaz, context_terms=["llm", "evaluation", "rag"])
-    item_pr = _item("https://github.com/acme/rag/pull/1", title="PR requires manual review")
-    item_sql = _item("https://github.com/acme/rag/issues/2", title="SQL exact match query")
-    item_llm = _item(
-        "https://github.com/acme/rag/issues/3",
-        title="LLM evaluation exact match score",
-    )
-    dets = ex.run([item_pr, item_sql, item_llm], {})
-    assert len(dets) == 1
-    assert dets[0].entry_id == "exact-match"
-    assert dets[0].confirmed_by == "context"
-    assert ex.dropped_ambiguous == 2
-
-
-def test_repo_owner_name_does_not_match() -> None:
-    gaz = Gazetteer.model_validate(
-        {
-            "version": "t",
-            "tools": [
-                {
-                    "id": "arize-phoenix",
-                    "name": "Arize Phoenix",
-                    "family": "tracing",
-                    "aliases": ["phoenix"],
-                    "packages": ["arize-phoenix"],
-                }
-            ],
-        }
-    )
-    ex = Extractor(gaz)
-    repo_item = _item(
-        "https://github.com/phoenix-zhou/industrial-general-rag",
-        kind=ItemKind.REPO,
-        title="phoenix-zhou/industrial-general-rag",
-    )
-    dets = ex.from_item(repo_item)
-    assert not dets, f"Expected no detections for owner prefix match, got {dets}"
-
-
-def test_summarize_merges_mixed_case_repos() -> None:
-    d1 = Detection(
-        item_id="1",
-        source="github",
-        repo="Acme/Rag",
-        entry_id="ragas",
-        entry_type="tool",
-        level="N1",
-        signal="text",
-        location="title",
-        evidence="Ragas",
-    )
-    d2 = Detection(
-        item_id="2",
-        source="github",
-        repo="acme/rag",
-        entry_id="ragas",
-        entry_type="tool",
-        level="N2",
-        signal="dependency",
-        location="requirements.txt",
-        evidence="ragas==0.2.1",
-    )
-    summary = summarize([d1, d2])
-    assert summary["ragas"] == {"N1": 0, "N2": 1, "N3": 0}

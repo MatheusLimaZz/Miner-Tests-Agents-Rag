@@ -176,7 +176,7 @@ Implemente cada item num commit próprio, com teste. O congelamento de escopo do
 **P0 (bloqueiam a avaliação):**
 
 1. **PRISMA e manifesto.** Consultas que não rodaram porque a fonte bateu o teto devem aparecer como truncamento `source_cap` e ser contadas no PRISMA. Mantenha o `estimated_total` mesmo com `per_query_limit ≤ 100` (pelo menos via `msrkit plan --estimate`), para reportar o que não foi recuperado. Na `d28a`, o PRISMA informa 0, o que está errado.
-2. **Orçamento por estrato de idioma.** As 4 consultas PT de issues ficaram sem cota na `d28a`. Reserve cota por idioma ou execute o estrato PT antes.
+2. ~~**Orçamento por estrato de idioma.**~~ Resolvido com a saída do estrato PT: o léxico ficou só em inglês (ADR-050).
 3. **Registro de desvios.** Quando o `protocol_sha256` mudar em relação à execução anterior, grave o diff no manifesto.
 4. **Planilha de precisão.** Separe as colunas `pre_llm`, `juiz_a`, `juiz_b` e `final`. O `precision score` deve se recusar a calcular só a partir de `pre_llm`, ou rotular o resultado como pré-avaliação.
 5. **Janela no Hugging Face.** 29 cards da `d28a` estão fora da janela. `[VERIFICAR]` se o adaptador usa `createdAt` ou `lastModified`.
@@ -241,6 +241,7 @@ Implemente cada item num commit próprio, com teste. O congelamento de escopo do
   - As APIs podem mudar ou fechar, como aconteceu com Reddit e X.
 - **Confiabilidade:**
   - As buscas das APIs não são determinísticas e os rankings mudam (medido em EQ3b).
+  - A busca de código do GitHub deriva com a reindexação. Em 24 h, o top-100 de 3 consultas ficou 98–100% igual, mas só 61% dos hits de código da `d855` estavam na `d28a`, coletada 13 dias antes; Hacker News, Hugging Face e Stack Exchange ficaram em 99–100%. Mitigação: o corpus do estudo é o pacote congelado da execução oficial, não uma nova consulta. O relatório de cada coleta mostra, por fonte, quanto se repete das anteriores (ADR-053).
   - O comportamento sob limite de taxa varia.
 - **Gazetteer:** um minerador ancorado em lista acha principalmente o que já conhece. Reporte a fração do catálogo que veio da descoberta aberta (A5).
 

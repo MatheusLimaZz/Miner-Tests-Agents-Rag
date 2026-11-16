@@ -75,7 +75,6 @@ concepts:
     - "retrieval augmented"
     - "retriever"
     - "reranker"
-    - "rerank"
     - "vector store"
     - "vector database"
     - "chunking"
@@ -93,6 +92,8 @@ concepts:
     - "evaluation"
     - "benchmark"
     - "assertion"
+    # "oracle" sozinho casava a Oracle (Oracle Cloud, Oracle IAM): na 015e, 260 itens
+    # casavam "oracle" e só 31 falavam de oráculo de teste (ADR-057).
     - "test oracle"
     - "judge"
     - "red teaming"
@@ -198,18 +199,20 @@ sources:
         - Python
         - TypeScript
       min_stars: 3
+      # Issues abertas por automação saem na coleta: conta que a API declara como
+      # robô (`user.type: Bot`) ou cujo login termina em `[bot]` ou `-bot`. Na 015e
+      # eram 812 das 7.339 issues (boletins diários de artigos, alertas de
+      # dependência). Cada descarte fica em discarded.jsonl com o motivo `bot_author`,
+      # e a consulta segue até completar o teto com issues de pessoas (ADR-057).
       filter_bots: true
-      require_issue_term_match: true
-      issue_in: "title,body"
+      # Rótulos que marcam registros que não são discussão: atualização de dependência
+      # (rótulo padrão do Dependabot e do Renovate) e registro de gestão de requisitos.
+      # Motivo do descarte: `excluded_label`. `question` fica de fora da lista de
+      # propósito: dúvida de quem usa é o discurso que o estudo procura, como as
+      # perguntas do Stack Exchange.
       exclude_labels:
+        - dependencies
         - requirement
-        - wontfix
-        - duplicate
-      exclude_repo_patterns:
-        - "(?i)dailyarxiv"
-        - "(?i)reading[_-]list"
-      exclude_title_patterns:
-        - "(?i)^latest\\s+\\d+\\s+papers\\b"
     # Consultas literais da §7.3 do Protocolo E2 v2, na sintaxe de busca do GitHub.
     # Rodam além dos termos. `evidence` indica o nível de evidência que a consulta
     # busca (N2: uso declarado; N3: invocação em CI).
@@ -352,5 +355,8 @@ limits:
   # fb68 parou antes das issues por termo de 2024 a 2026; o plano completo pede até
   # ~16.500 itens.
   max_items_per_source: 20000
-  max_requests_per_source: 2500
+  # A 015e gastou 1.017 requisições no GitHub. Com o filtro de robôs, uma consulta
+  # dominada por automação pagina até 10 vezes para completar o teto; o limite sobe
+  # para que a fonte não pare antes das últimas consultas, as de issues por termo.
+  max_requests_per_source: 4000
   stop_on_quota_exhausted: true

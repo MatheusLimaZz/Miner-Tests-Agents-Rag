@@ -103,11 +103,6 @@ class StackExchangeAdapter(BaseAdapter):
             reason="Stack Exchange API key configured. ~10,000 daily quota.",
         )
 
-    @property
-    def api_key(self) -> str | None:
-        """API key from environment (STACKEXCHANGE_KEY)."""
-        return self._env("STACKEXCHANGE_KEY")
-
     def estimate(self, q: Query) -> int | None:
         """Use 'total' field from the response when available."""
         sites = q.extra.get("sites", ["stackoverflow"])
@@ -166,10 +161,7 @@ class StackExchangeAdapter(BaseAdapter):
                 if total_yielded >= limit:
                     return
                 page = 1
-                if self.policy.max_pages is not None and self.policy.max_pages != 25:
-                    max_pages = self.policy.max_pages
-                else:
-                    max_pages = 100 if self.api_key else 25
+                max_pages = self.policy.max_pages or 25
 
                 while page <= max_pages and total_yielded < limit:
                     page_size = min(self.policy.max_page_size, limit - total_yielded)

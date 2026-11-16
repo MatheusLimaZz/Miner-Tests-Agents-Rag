@@ -123,6 +123,53 @@ class TestFlow:
         assert (flow.included, flow.coded) == (1, 1)
         assert flow.included_by_source == {"github": 1}
 
+    def test_planned_queries_not_executed(self, tmp_path: Path) -> None:
+        items = _setup(tmp_path)
+        m = _manifest()
+        m.sources[0].planned = [{}, {}, {}]  # 3 planned, 1 executed
+        flow = build_flow("r", m, items, items, None, tmp_path / "x.jsonl", {}, set())
+        assert flow.not_executed == {"github": 2}
+        md = render_markdown(flow)
+        assert "Planned queries not executed (source cap or interruption): 2 (github 2)" in md
+        none = build_flow("r", _manifest(), items, items, None, tmp_path / "x.jsonl", {}, set())
+        assert none.not_executed == {}
+        assert "Planned queries not executed (source cap or interruption): 0\n" in (
+            render_markdown(none)
+        )
+
+    def test_queries_cut_by_the_item_limit_are_counted_as_a_sample(self, tmp_path: Path) -> None:
+        """The 015e flow said 0 not retrieved with 122 queries stopped at 100 items."""
+        from msrkit.prisma import render_mermaid, render_tikz
+
+        def q(items: int, est: int | None, discarded: int = 0, *reasons: str):
+            return QueryManifestEntry(
+                query_string="q", partitions=1, requests=1, items=items, truncated=bool(reasons),
+                truncation_reasons=list(reasons), estimated_total=est, discarded=discarded,
+            )  # fmt: skip
+
+        m = _manifest()
+        m.sources[0].queries = [
+            q(100, 4000, 0, "item_limit"),
+            q(100, 1500, 400, "item_limit"),  # 500 examined: 400 dropped by a local filter
+            q(100, None, 0, "item_limit"),  # the source gave no total
+            q(30, 30),  # complete
+            q(3, 1003, 0, "source_cap"),  # the source's cap, counted apart
+        ]
+        items = _setup(tmp_path)
+        flow = build_flow("r", m, items, items, None, tmp_path / "x.jsonl", {}, set())
+        assert flow.sampled_out == {"github": 3900 + 1000}
+        assert (flow.sampled_queries, flow.sampled_queries_uncounted) == (3, 1)
+        assert flow.not_retrieved_estimate == {"github": 1000} and flow.truncated_queries == 1
+        md = render_markdown(flow)
+        assert "| github | 733 | 1000 | 4900 |" in md
+        assert "Queries stopped at the run's item limit (a sample of their results): 3" in md
+        assert "1 without a total from the source" in md and "upper bound" in md
+        assert "item limit (est., upper bound): 4900" in render_mermaid(flow)
+        assert "teto de itens (est., limite superior): 4900" in render_tikz(flow)
+        # nothing to say when no query was cut by the limit
+        plain = build_flow("r", _manifest(), items, items, None, tmp_path / "x.jsonl", {}, set())
+        assert plain.sampled_out == {} and "upper bound" not in render_markdown(plain)
+
     def test_missing_dedupe_is_na_not_zero(self, tmp_path: Path) -> None:
         from msrkit.prisma import render_tikz
 

@@ -13,12 +13,19 @@ on the automatic `detections` basis, what the Article 2 protocol guide asks for:
 - QP2: methods per system and the oracle ladder from each method's typical rung
   (an approximation; the manual coding is the reference).
 - QP3: engagement normalized within each source x kind (percentile with average
-  ranks for ties) after a minimum-age filter; median per tool and per method
-  with bootstrap CIs; Kruskal-Wallis with Dunn/Holm, epsilon squared and Cliff's
-  delta; Spearman between engagement and external N3; sensitivity analyses
-  (without listicles, only non-truncated queries); a negative binomial
-  robustness check; proposition P3; and the "pain" engagement of the tools'
-  own bug issues.
+  ranks for ties) after a minimum-age filter; mean per tool and per method with
+  bootstrap CIs (the median is reported, but most issues have no reaction and it
+  sits on the floor for every tool); Kruskal-Wallis with Dunn/Holm, epsilon
+  squared and Cliff's delta; Spearman between engagement and external N3;
+  sensitivity analyses (top share of the stratum, without listicles, only
+  non-truncated queries); a negative binomial robustness check; proposition P3;
+  and the "pain" engagement of the tools' own bug issues.
+
+Queries that stopped at the run's item limit are samples. When the package's
+manifest has the per-query totals, P1 and P2 are also computed on design-weighted
+statistics (msrkit.weights), and a proposition is read as supported only when the
+sample and the weighted readings agree. Automated GitHub issues (bot upkeep and
+periodic bulletins, by title) are left out of every analysis.
 
 Outputs go to --out: CSV files, `summary.json` and LaTeX files the paper
 includes (`macros.tex` plus table bodies and the scatter figure). Every macro
@@ -56,9 +63,10 @@ from pydantic import ValidationError
 from scipy import stats
 
 from msrkit.analysis import Unit, oracle_distribution, units_from_detections
-from msrkit.extract import LEVEL_RANK, Detection
+from msrkit.extract import LEVEL_RANK, N3_MIN_CONTRIBUTORS, N3_MIN_MONTHS, Detection
 from msrkit.gazetteer import Gazetteer
-from msrkit.models import Item
+from msrkit.models import Item, Manifest
+from msrkit.weights import ItemWeight, item_weights, kish, pair_weights, strata
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -87,6 +95,30 @@ BOT_TITLE = re.compile(
     r"|vulnerabilit(?:y|ies) \(highest severity",
     re.IGNORECASE,
 )
+# Periodic bulletins that ordinary accounts publish as issues (daily arXiv listings,
+# news digests, weekly reports): a date in the title plus a word of the genre, or a
+# title that is nothing but a date. The collection's bot filter only sees the author.
+_MONTH = r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?"
+DATED_TITLE = re.compile(
+    rf"\b\d{{4}}[-/.]\d{{1,2}}[-/.]\d{{1,2}}\b|\b\d{{1,2}}[-/.]\d{{1,2}}[-/.]\d{{4}}\b"
+    rf"|\b{_MONTH}\s+\d{{1,2}},?\s+\d{{4}}\b|\b\d{{1,2}}\s+{_MONTH}\s+\d{{4}}\b",
+    re.IGNORECASE,
+)
+SERIAL_TITLE = re.compile(
+    r"\b(?:papers?|arxiv|digest|daily|weekly|nightly|radar|newsletter|roundup|hacker\s*news"
+    r"|trending|briefing|listings?|submissions?)\b|信息流|日报|周报|论文|速递",
+    re.IGNORECASE,
+)
+
+
+def automated_title(title: str) -> bool:
+    """Whether an issue title is that of an automated record (bot upkeep or bulletin)."""
+    if BOT_TITLE.search(title):
+        return True
+    if not DATED_TITLE.search(title):
+        return False
+    return bool(SERIAL_TITLE.search(title)) or not re.search(r"[^\W\d_]", title)
+
 
 FAMILY_LABEL = {
     "avaliacao-llm-rag": "avaliação LLM/RAG",
@@ -124,6 +156,7 @@ MACROS: dict[str, str] = {
     "ResLimiarTau": "parameter --tau-threshold",
     "ResLimiarRho": "parameter --rho-threshold",
     "ResMinPar": "parameter --min-together",
+    "ResTopoPct": "parameter --top-share, as a percentage (top stratum share of QP3)",
     # corpus (package files)
     "ResRunId": "run/manifest.json: run_id",
     "ResProtocoloSha": "run/manifest.json: protocol_sha256 (first 12 hex)",
@@ -148,6 +181,13 @@ MACROS: dict[str, str] = {
     "ResPrismaIncluidos": "reports/prisma.json: included after screening",
     "ResPrismaPendentes": "reports/prisma.json: without screening decision",
     "ResPrismaCodificados": "reports/prisma.json: coded",
+    "ResPrismaNaoExaminados": "reports/prisma.json: not examined by item-limit queries (est.)",
+    "ResItensAutomaticos": "corpus: automated GitHub issues set aside by title (all analyses)",
+    # sampling weights (run/manifest.json through msrkit.weights, ADR-058)
+    "ResPesos": "whether the manifest gives sampling fractions (design weights)",
+    "ResPesoMax": "largest design weight of an item",
+    "ResNEfetivo": "Kish effective sample size of the items",
+    "ResItensPesoDesconhecido": "items of truncated queries without a total (weight 1)",
     # QP1 (detections basis, units, best level, self excluded)
     "ResFerramentasTeste": "gazetteer: testing tools (families other than framework-sut)",
     "ResFerramentasDetectadas": "QP1: testing tools in >= 1 unit",
@@ -169,7 +209,14 @@ MACROS: dict[str, str] = {
     "ResTauDoisTresHi": "QP1.3: bootstrap 95% CI, upper",
     "ResTauUmDois": "QP1.3: Kendall tau-b, N1 x N2 rankings",
     "ResTauFerramentas": "QP1.3: tools in the rank correlation",
-    "ResPUmVeredito": "P1 verdict against --tau-threshold",
+    "ResPUmVeredito": "P1 verdict against --tau-threshold (sample counts)",
+    "ResTauUmTresPond": "QP1.3: Kendall tau-b, N1 x external N3, design-weighted counts",
+    "ResTauUmTresPondLo": "QP1.3 weighted: bootstrap 95% CI, lower",
+    "ResTauUmTresPondHi": "QP1.3 weighted: bootstrap 95% CI, upper",
+    "ResPUmVereditoPond": "P1 verdict on the design-weighted counts",
+    "ResPUmConclusao": "P1: supported only when sample and weighted verdicts agree",
+    "ResTauUmTresNome": "QP1.3 sensitivity: tau with name-only CI evidence counted as N3",
+    "ResUnidadesComNTresNome": "QP1 sensitivity: units at external N3 under that looser rule",
     "ResMaisFaladas": "QP1.3: tools most above the diagonal (mention >> adoption)",
     "ResMaisAdotadas": "QP1.3: tools most below the diagonal (adoption >> mention)",
     "ResFwTop": "context: framework in most units",
@@ -195,23 +242,32 @@ MACROS: dict[str, str] = {
     "ResEngExclSemMetrica": "QP3: excluded without engagement metric or date",
     "ResEngFerramentas": "QP3: tools with n >= --min-n",
     "ResEngMetodos": "QP3: methods with n >= --min-n",
-    "ResEngTopFerramenta": "QP3: tool with highest median engagement",
-    "ResEngTopFerramentaMed": "QP3: its median E",
-    "ResEngTopMetodo": "QP3: method with highest median engagement",
-    "ResEngTopMetodoMed": "QP3: its median E",
+    "ResEngEstatistica": "QP3: statistic that summarizes E per tool (ADR-059)",
+    "ResEngPctPiso": "QP3: % of eligible items tied at the lowest value of their stratum",
+    "ResEngTopFerramenta": "QP3: tool with highest mean engagement",
+    "ResEngTopFerramentaMed": "QP3: its mean E",
+    "ResEngTopMetodo": "QP3: method with highest mean engagement",
+    "ResEngTopMetodoMed": "QP3: its mean E",
     "ResKwH": "QP3: Kruskal-Wallis H across tools",
     "ResKwP": "QP3: Kruskal-Wallis p-value",
     "ResKwEps": "QP3: epsilon squared",
     "ResDunnSig": "QP3: Dunn pairs significant after Holm",
     "ResDunnPares": "QP3: Dunn pairs tested",
-    "ResRho": "P2: Spearman rho, median E x external N3",
+    "ResRho": "P2: Spearman rho, mean E x external N3",
+    "ResRhoLo": "P2: bootstrap 95% CI over items (N3 fixed), lower",
+    "ResRhoHi": "P2: bootstrap 95% CI over items (N3 fixed), upper",
     "ResRhoP": "P2: p-value",
     "ResRhoN": "P2: tools in the correlation",
-    "ResPDoisVeredito": "P2 verdict against --rho-threshold",
+    "ResPDoisVeredito": "P2 verdict against --rho-threshold (sample statistics)",
+    "ResRhoPond": "P2: rho, design-weighted mean E x weighted external N3",
+    "ResPDoisVereditoPond": "P2 verdict on the design-weighted statistics",
+    "ResPDoisConclusao": "P2: supported only when sample and weighted verdicts agree",
+    "ResRhoMediana": "P2 as first registered: rho with the median E (n/d when it is constant)",
+    "ResRhoTopo": "P2 sensitivity: rho with the share of items in the top of their stratum",
     "ResRhoSemListicle": "P2 sensitivity: rho without listicles",
     "ResRhoNaoTruncadas": "P2 sensitivity: rho with non-truncated queries only",
     "ResItensNaoTruncadas": "P2 sensitivity: eligible items from non-truncated queries",
-    "ResNbRho": "robustness: rho between NB tool effects and median E",
+    "ResNbRho": "robustness: rho between NB tool effects and mean E",
     "ResQuadFalado": "QP3 quadrant: high engagement, low adoption",
     "ResQuadAdotado": "QP3 quadrant: low engagement, high adoption",
     "ResPTresDelta": "P3: Cliff's delta, agente x rag items (2025-2026)",
@@ -241,9 +297,18 @@ KNOWN_D28A = {
     "ResTopNDois": "Ragas",
     "ResTopNTres": "promptfoo",
 }
-TABLES = ("tab_qp1", "tab_qp1_pares", "tab_qp2", "tab_qp2_oraculos", "tab_qp3", "tab_qp3_metodos")
+TABLES = (
+    "tab_qp1",
+    "tab_qp1_pond",
+    "tab_qp1_pares",
+    "tab_qp2",
+    "tab_qp2_oraculos",
+    "tab_qp3",
+    "tab_qp3_metodos",
+)
 TABLE_COLUMNS = {
     "tab_qp1": 8,
+    "tab_qp1_pond": 5,
     "tab_qp1_pares": 5,
     "tab_qp2": 5,
     "tab_qp2_oraculos": 4,
@@ -381,24 +446,25 @@ def load_package(path: Path, gazetteer_path: Path | None = None) -> Package:
         name = find(suffix)
         return read(name).decode("utf-8") if name else ""
 
+    def records(suffix: str) -> list[str]:
+        # One record per "\n". `str.splitlines` also breaks on U+2028 and other separators
+        # that JSON leaves unescaped inside a string, and cut such items into pieces.
+        return [line for line in text(suffix).split("\n") if line.strip()]
+
     skipped: Counter[str] = Counter()
     items: list[Item] = []
-    for line in text("corpus/items.jsonl").split("\n"):
-        if line.strip():
-            try:
-                items.append(Item.model_validate_json(line))
-            except ValidationError:
-                skipped["items"] += 1
+    for line in records("corpus/items.jsonl"):
+        try:
+            items.append(Item.model_validate_json(line))
+        except ValidationError:
+            skipped["items"] += 1
     detections: list[Detection] = []
-    for line in text("evidence/detections.jsonl").split("\n"):
-        if line.strip():
-            try:
-                detections.append(Detection.model_validate_json(line))
-            except ValidationError:
-                skipped["detections"] += 1
-    repos = [
-        json.loads(line) for line in text("evidence/github_repos.jsonl").split("\n") if line.strip()
-    ]
+    for line in records("evidence/detections.jsonl"):
+        try:
+            detections.append(Detection.model_validate_json(line))
+        except ValidationError:
+            skipped["detections"] += 1
+    repos = [json.loads(line) for line in records("evidence/github_repos.jsonl")]
 
     if gazetteer_path is not None:
         raw = yaml.safe_load(gazetteer_path.read_text(encoding="utf-8"))
@@ -443,9 +509,17 @@ class Catalog:
     self_repos: dict[str, set[str]]
     method_rungs: dict[str, str]
     method_names: dict[str, str]
+    self_orgs: dict[str, set[str]] = field(default_factory=dict)
 
     def is_self(self, unit_id: str, tool: str) -> bool:
-        return unit_id.lower() in self.self_repos.get(tool, set())
+        """Return whether a unit belongs to the tool's repository or maintainer organization."""
+        unit_lower = unit_id.lower()
+        if unit_lower in self.self_repos.get(tool, set()):
+            return True
+        if "/" in unit_lower:
+            owner = unit_lower.split("/", 1)[0]
+            return owner in self.self_orgs.get(tool, set())
+        return False
 
     def display(self, entry: str) -> str:
         return latex_escape(
@@ -461,6 +535,9 @@ def catalog(gz: Gazetteer) -> Catalog:
         test_tools=[t.id for t in gz.tools if t.family != FAMILY_SUT],
         frameworks=[t.id for t in gz.tools if t.family == FAMILY_SUT],
         self_repos={t.id: {r.lower() for r in t.repos} for t in gz.tools},
+        self_orgs={
+            t.id: {r.lower().split("/", 1)[0] for r in t.repos if "/" in r} for t in gz.tools
+        },
         method_rungs={m.id: m.oracle for m in gz.methods if m.oracle},
         method_names={m.id: m.name for m in gz.methods},
     )
@@ -474,8 +551,17 @@ def external_tools(unit: Unit, cat: Catalog, wanted: Iterable[str]) -> set[str]:
 # -- QP1 ------------------------------------------------------------------------
 
 
-def pyramid(units: list[Unit], cat: Catalog) -> list[dict[str, Any]]:
-    """Units per testing tool at their best level, self repositories apart."""
+def pyramid(
+    units: list[Unit], cat: Catalog, pair_w: dict[tuple[str, str], float] | None = None
+) -> list[dict[str, Any]]:
+    """Units per testing tool at their best level, self repositories apart.
+
+    `n3_ext`, `n2` and `n1` count the units of the sample. With `pair_w` (the design
+    weight of each unit-tool pair, msrkit.weights.pair_weights), the `_w` columns add
+    the weights instead: estimates for what the sources hold, where a 100-item cap
+    takes a small share of a large query.
+    """
+    pair_w = pair_w or {}
     rows = {
         t: {
             "tool": t,
@@ -488,6 +574,9 @@ def pyramid(units: list[Unit], cat: Catalog) -> list[dict[str, Any]]:
             "self": 0,
             "rag": 0,
             "agente": 0,
+            "n3_ext_w": 0.0,
+            "n2_w": 0.0,
+            "n1_w": 0.0,
         }
         for t in cat.test_tools
     }
@@ -499,13 +588,17 @@ def pyramid(units: list[Unit], cat: Catalog) -> list[dict[str, Any]]:
             if cat.is_self(u.id, tool):
                 row["self"] += 1
                 continue
-            row["n3_ext" if level == "N3" else level.lower()] += 1
+            key = "n3_ext" if level == "N3" else level.lower()
+            row[key] += 1
+            row[f"{key}_w"] += pair_w.get((u.id, tool), 1.0)
             row["rag"] += "rag" in u.systems
             row["agente"] += "agente" in u.systems
     out = list(rows.values())
     for row in out:
         row["total"] = row["n3_ext"] + row["n2"] + row["n1"]
-    for key in ("n3_ext", "n2", "n1"):
+        for key in ("n3_ext_w", "n2_w", "n1_w"):
+            row[key] = round(row[key], 1)
+    for key in ("n3_ext", "n2", "n1", "n3_ext_w"):
         values = [-r[key] for r in out]
         ranks = stats.rankdata(values, method="min")
         for row, rank in zip(out, ranks, strict=True):
@@ -524,17 +617,41 @@ def level_matrix(units: list[Unit], tools: list[str], cat: Catalog) -> np.ndarra
     return matrix
 
 
+def weight_matrix(
+    units: list[Unit], tools: list[str], pair_w: dict[tuple[str, str], float]
+) -> np.ndarray:
+    """Design weight of each unit-tool pair, in the layout of level_matrix (1 when unknown)."""
+    index = {t: j for j, t in enumerate(tools)}
+    matrix = np.ones((len(units), len(tools)), dtype=np.float64)
+    for i, u in enumerate(units):
+        for tool in u.tools:
+            j = index.get(tool)
+            if j is not None:
+                matrix[i, j] = pair_w.get((u.id, tool), 1.0)
+    return matrix
+
+
 def kendall_ci(
-    matrix: np.ndarray, a: int, b: int, n_boot: int, rng: np.random.Generator, chunk: int = 250
+    matrix: np.ndarray,
+    a: int,
+    b: int,
+    n_boot: int,
+    rng: np.random.Generator,
+    chunk: int = 250,
+    weights: np.ndarray | None = None,
 ) -> dict[str, Any]:
     """Kendall tau-b between per-tool counts at best levels `a` and `b`.
 
     Only tools with at least one unit enter. The CI resamples units (multinomial
-    weights), recounts and recomputes tau; percentile interval.
+    weights), recounts and recomputes tau; percentile interval. With `weights` (the
+    design weight of each unit-tool pair), a unit counts by its weight.
     """
     keep = (matrix > 0).sum(axis=0) > 0
     first = (matrix[:, keep] == a).astype(np.float64)
     second = (matrix[:, keep] == b).astype(np.float64)
+    if weights is not None:
+        first *= weights[:, keep]
+        second *= weights[:, keep]
     x, y = first.sum(axis=0), second.sum(axis=0)
     out: dict[str, Any] = {
         "tools": int(keep.sum()),
@@ -665,6 +782,32 @@ class EngItem:
     year: int
     query: str
     e: float = 0.0  # percentile within source x kind
+    w: float = 1.0  # design weight (msrkit.weights)
+    e_w: float = 0.0  # the same percentile over the design-weighted stratum
+    floor: bool = False  # tied at the lowest value of its stratum (e.g. zero reactions)
+
+
+def percentiles(values: list[int], weights: list[float]) -> tuple[np.ndarray, np.ndarray]:
+    """Mid-rank percentile of each value among the others of its stratum, plain and weighted.
+
+    E = (items below + half of the items tied) / (other items): the chance that the
+    item beats another item of the stratum drawn at random, ties counting half. Its
+    mean over a stratum is 0.5 whatever the distribution, zero-inflated or not.
+    """
+    v = np.asarray(values, dtype=np.float64)
+    w = np.asarray(weights, dtype=np.float64)
+    n = len(v)
+    if n < 2:
+        return np.full(n, 0.5), np.full(n, 0.5)
+    plain = (stats.rankdata(v, method="average") - 1) / (n - 1)
+    _, inverse = np.unique(v, return_inverse=True)
+    tied = np.bincount(inverse, weights=w)
+    below = (np.cumsum(tied) - tied)[inverse]
+    others = w.sum() - w
+    weighted = np.where(
+        others > 0, (below + 0.5 * (tied[inverse] - w)) / np.maximum(others, 1e-12), 0.5
+    )
+    return plain, weighted
 
 
 def metric_for(source: str, kind: str, with_repos: bool) -> str | None:
@@ -680,8 +823,13 @@ def _aware(dt: datetime) -> datetime:
 
 
 def engagement_items(
-    pkg: Package, min_age: float, with_repos: bool, keep_bots: bool
+    pkg: Package,
+    min_age: float,
+    with_repos: bool,
+    keep_bots: bool,
+    weights: dict[str, float] | None = None,
 ) -> tuple[list[EngItem], Counter[str], list[Item]]:
+    weights = weights or {}
     eligible: list[EngItem] = []
     excluded: Counter[str] = Counter()
     bug_issues: list[Item] = []
@@ -699,7 +847,7 @@ def engagement_items(
         if value is None or it.created_at is None:
             excluded["sem_metrica"] += 1
             continue
-        if not keep_bots and it.source == "github" and BOT_TITLE.search(it.title or ""):
+        if not keep_bots and it.source == "github" and automated_title(it.title or ""):
             excluded["bot"] += 1
             continue
         age = (_aware(it.provenance.fetched_at) - _aware(it.created_at)).days / DAYS_PER_MONTH
@@ -716,29 +864,32 @@ def engagement_items(
                 systems=frozenset(c for c in it.concepts if c in SYSTEMS),
                 year=it.created_at.year,
                 query=query,
+                w=weights.get(it.id, 1.0),
             )
         )
     strata: dict[tuple[str, str], list[EngItem]] = defaultdict(list)
     for e in eligible:
         strata[(e.source, e.kind)].append(e)
     for members in strata.values():
-        ranks = stats.rankdata([m.value for m in members], method="average")
-        n = len(members)
-        for m, r in zip(members, ranks, strict=True):
-            m.e = float((r - 1) / (n - 1)) if n > 1 else 0.5
+        plain, weighted = percentiles([m.value for m in members], [m.w for m in members])
+        lowest = min(m.value for m in members)
+        for m, e_plain, e_weighted in zip(members, plain, weighted, strict=True):
+            m.e, m.e_w = float(e_plain), float(e_weighted)
+            m.floor = m.value == lowest
     return eligible, excluded, bug_issues
 
 
-def median_ci(
+def mean_ci(
     values: list[float], n_boot: int, rng: np.random.Generator, chunk: int = 500
 ) -> tuple[float, float, float]:
+    """Mean with a percentile bootstrap 95% CI."""
     v = np.asarray(values, dtype=np.float64)
-    medians = []
+    means = []
     for start in range(0, n_boot, chunk):
         idx = rng.integers(0, len(v), size=(min(chunk, n_boot - start), len(v)))
-        medians.append(np.median(v[idx], axis=1))
-    lo, hi = np.percentile(np.concatenate(medians), [2.5, 97.5])
-    return float(np.median(v)), float(lo), float(hi)
+        means.append(v[idx].mean(axis=1))
+    lo, hi = np.percentile(np.concatenate(means), [2.5, 97.5])
+    return float(v.mean()), float(lo), float(hi)
 
 
 def holm(pvalues: list[float]) -> list[float]:
@@ -806,25 +957,60 @@ def kruskal_dunn(groups: dict[str, list[float]]) -> dict[str, Any]:
     }
 
 
+def _members(items: list[EngItem], entities: dict[str, set[str]]) -> dict[str, list[EngItem]]:
+    groups: dict[str, list[EngItem]] = defaultdict(list)
+    for it in items:
+        for entry in entities.get(it.id, ()):
+            groups[entry].append(it)
+    return groups
+
+
+def score(members: list[EngItem], stat: str, top_share: float = 0.1) -> float:
+    """One number for the engagement of a tool's (or method's) items (ADR-059).
+
+    - `mean`: mean of E, the statistic of P2. E is a mid-rank percentile, so its mean
+      is the chance that an item of the tool beats another item of its stratum (0.5 =
+      a typical item). The Kruskal-Wallis and Dunn tests compare these same mean ranks.
+    - `mean_w`: the same with design weights, in the percentile and in the mean.
+    - `top`: share of the items in the top `top_share` of their stratum.
+    - `median`: the statistic first registered. With most issues at zero reactions it
+      sits on the floor for every tool and cannot rank them.
+    """
+    if stat == "mean":
+        return float(np.mean([m.e for m in members]))
+    if stat == "mean_w":
+        return float(np.average([m.e_w for m in members], weights=[m.w for m in members]))
+    if stat == "top":
+        return float(np.mean([m.e >= 1.0 - top_share for m in members]))
+    if stat == "median":
+        return float(np.median([m.e for m in members]))
+    raise ValueError(f"unknown engagement statistic: {stat}")
+
+
 def engagement_by(
     items: list[EngItem],
     entities: dict[str, set[str]],
     min_n: int,
     n_boot: int,
     rng: np.random.Generator,
+    top_share: float = 0.1,
 ) -> list[dict[str, Any]]:
-    values: dict[str, list[float]] = defaultdict(list)
-    for it in items:
-        for entry in entities.get(it.id, ()):
-            values[entry].append(it.e)
     rows = []
-    for entry, vals in values.items():
-        row: dict[str, Any] = {"entry": entry, "n": len(vals)}
-        if len(vals) >= min_n:
-            med, lo, hi = median_ci(vals, n_boot, rng)
-            row.update(median=round(med, 4), lo=round(lo, 4), hi=round(hi, 4))
+    for entry, members in _members(items, entities).items():
+        row: dict[str, Any] = {"entry": entry, "n": len(members)}
+        if len(members) >= min_n:
+            mean, lo, hi = mean_ci([m.e for m in members], n_boot, rng)
+            row.update(
+                mean=round(mean, 4),
+                lo=round(lo, 4),
+                hi=round(hi, 4),
+                median=round(score(members, "median"), 4),
+                share_floor=round(float(np.mean([m.floor for m in members])), 4),
+                share_top=round(score(members, "top", top_share), 4),
+                mean_w=round(score(members, "mean_w"), 4),
+            )
         rows.append(row)
-    return sorted(rows, key=lambda r: (-(r.get("median") or -1), -r["n"], r["entry"]))
+    return sorted(rows, key=lambda r: (-(r.get("mean") or -1), -r["n"], r["entry"]))
 
 
 def spearman(xs: list[float], ys: list[float]) -> tuple[float, float]:
@@ -834,29 +1020,77 @@ def spearman(xs: list[float], ys: list[float]) -> tuple[float, float]:
     return float(res.statistic), float(res.pvalue)
 
 
-def medians_for(
-    items: list[EngItem], entities: dict[str, set[str]], min_n: int
+def scores_for(
+    items: list[EngItem],
+    entities: dict[str, set[str]],
+    min_n: int,
+    stat: str = "mean",
+    top_share: float = 0.1,
 ) -> dict[str, float]:
-    values: dict[str, list[float]] = defaultdict(list)
-    for it in items:
-        for entry in entities.get(it.id, ()):
-            values[entry].append(it.e)
-    return {k: float(np.median(v)) for k, v in values.items() if len(v) >= min_n}
+    return {
+        entry: score(members, stat, top_share)
+        for entry, members in _members(items, entities).items()
+        if len(members) >= min_n
+    }
 
 
 def rho_with_adoption(
-    medians: dict[str, float], adoption: dict[str, int]
+    scores: dict[str, float], adoption: dict[str, float]
 ) -> tuple[float, float, int]:
-    tools = sorted(t for t in medians if t in adoption)
-    rho, p = spearman([medians[t] for t in tools], [adoption[t] for t in tools])
+    tools = sorted(t for t in scores if t in adoption)
+    rho, p = spearman([scores[t] for t in tools], [adoption[t] for t in tools])
     return rho, p, len(tools)
+
+
+def rho_ci(
+    items: list[EngItem],
+    entities: dict[str, set[str]],
+    scores: dict[str, float],
+    adoption: dict[str, float],
+    n_boot: int,
+    rng: np.random.Generator,
+    chunk: int = 250,
+) -> tuple[float, float]:
+    """Percentile bootstrap 95% CI of rho(mean E, adoption), resampling the items.
+
+    Adoption is held fixed: the interval shows how far the engagement side alone can
+    move the correlation, so it is narrower than the full uncertainty.
+    """
+    tools = sorted(t for t in scores if t in adoption)
+    if len(tools) < 3 or not items:
+        return math.nan, math.nan
+    index = {t: j for j, t in enumerate(tools)}
+    member = np.zeros((len(items), len(tools)))
+    for i, it in enumerate(items):
+        for t in entities.get(it.id, ()):
+            if t in index:
+                member[i, index[t]] = 1.0
+    e = np.array([it.e for it in items])
+    y = [adoption[t] for t in tools]
+    probs = np.full(len(items), 1.0 / len(items))
+    rhos: list[float] = []
+    for start in range(0, n_boot, chunk):
+        draws = rng.multinomial(len(items), probs, size=min(chunk, n_boot - start))
+        draws = draws.astype(np.float64)
+        counts = draws @ member
+        sums = (draws * e) @ member
+        for total, count in zip(sums, counts, strict=True):
+            if (count == 0).any():
+                continue
+            rho, _ = spearman(list(total / count), y)
+            if not math.isnan(rho):
+                rhos.append(rho)
+    if not rhos:
+        return math.nan, math.nan
+    lo, hi = np.percentile(rhos, [2.5, 97.5])
+    return float(lo), float(hi)
 
 
 def nb_robustness(
     items: list[EngItem],
     tools_of: dict[str, set[str]],
     keep: list[str],
-    medians: dict[str, float],
+    scores: dict[str, float],
 ) -> dict[str, Any]:
     """Negative binomial on raw counts: tool and source x kind fixed effects, offset log(age)."""
     try:
@@ -888,14 +1122,14 @@ def nb_robustness(
     except Exception as e:  # noqa: BLE001 - report, never fail the analysis
         return {"status": f"failed: {type(e).__name__}"}
     effects = {reference: 0.0, **{t: float(fit.params[1 + i]) for i, t in enumerate(others)}}
-    tools = sorted(t for t in effects if t in medians)
-    rho, p = spearman([effects[t] for t in tools], [medians[t] for t in tools])
+    tools = sorted(t for t in effects if t in scores)
+    rho, p = spearman([effects[t] for t in tools], [scores[t] for t in tools])
     return {
         "status": "ok",
         "reference": reference,
         "rows": len(rows),
         "irr": {t: round(math.exp(v), 4) for t, v in effects.items()},
-        "rho_with_median": rho,
+        "rho_with_mean": rho,
         "p": p,
         "converged": bool(fit.mle_retvals.get("converged")),
     }
@@ -997,10 +1231,115 @@ def non_truncated_queries(manifest: dict[str, Any]) -> set[tuple[str, str]] | No
 # -- run ------------------------------------------------------------------------
 
 
+def human_corpus(pkg: Package, keep_bots: bool) -> tuple[list[Item], list[Detection], int]:
+    """Items and detections without the automated GitHub issues, and how many those are.
+
+    A dependency alert or a daily list of papers is not somebody discussing testing: it
+    is left out of every analysis, units included (`--keep-bots` keeps it).
+    """
+    if keep_bots:
+        return pkg.items, pkg.detections, 0
+    automated = {
+        it.id
+        for it in pkg.items
+        if it.source == "github" and str(it.kind) == "issue" and automated_title(it.title or "")
+    }
+    return (
+        [it for it in pkg.items if it.id not in automated],
+        [d for d in pkg.detections if d.item_id not in automated],
+        len(automated),
+    )
+
+
+def design_weights(pkg: Package) -> tuple[dict[str, ItemWeight], dict[str, Any]]:
+    """Design weight of each item, from the run manifest (ADR-058), and what is known.
+
+    `available` is False when the manifest cannot give sampling fractions: a package
+    from before the per-query totals, or one whose truncated queries have no total.
+    The weighted analyses are then left out instead of run with weights of 1.
+    """
+    info: dict[str, Any] = {
+        "available": False,
+        "max": 1.0,
+        "n_eff": float(len(pkg.items)),
+        "unknown_items": 0,
+        "strata": 0,
+        "strata_cut_short": 0,
+    }
+    try:
+        manifest = Manifest.model_validate(pkg.manifest)
+    except ValidationError:
+        return {}, info
+    rows = [s for s in strata(manifest) if s.key]
+    weights = item_weights(manifest, pkg.items)
+    cut = [s for s in rows if s.cut_short]
+    values = [w.weight for w in weights.values()]
+    info.update(
+        available=bool(rows) and (not cut or any(s.known for s in cut)),
+        max=max(values, default=1.0),
+        n_eff=kish(values),
+        unknown_items=sum(not w.known for w in weights.values()),
+        strata=len(rows),
+        strata_cut_short=len(cut),
+    )
+    return weights, info
+
+
+def sustained_repos(repos: list[dict[str, Any]]) -> set[str]:
+    """Repositories that meet the N3 thresholds, from the package's repository signals."""
+    return {
+        str(r.get("repo", "")).lower()
+        for r in repos
+        if not r.get("error")
+        and len(r.get("commit_months") or []) >= N3_MIN_MONTHS
+        and (r.get("contributors") or 0) >= N3_MIN_CONTRIBUTORS
+    }
+
+
+def name_as_adoption(detections: list[Detection], sustained: set[str]) -> list[Detection]:
+    """The detections under a looser N3 rule, for the sensitivity analysis.
+
+    The extractor keeps at N2 a CI workflow that only carries the tool's name in a
+    command (a path, an argument). Here that evidence counts as N3 when the repository
+    meets the thresholds, as every CI hit did before ADR-056.
+    """
+    return [
+        d.model_copy(update={"level": "N3"})
+        if d.signal == "ci" and d.via == "name" and (d.repo or "").lower() in sustained
+        else d
+        for d in detections
+    ]
+
+
+def verdict(value: float, threshold: float, label: str, absolute: bool = False) -> str:
+    if math.isnan(value):
+        return "n/d"
+    below = (abs(value) if absolute else value) < threshold
+    return f"sustenta {label}" if below else f"não sustenta {label}"
+
+
+def conclusion(sample: str, weighted: str) -> str:
+    """A proposition holds only when the sample and the weighted readings agree."""
+    if weighted == "n/d":
+        return sample
+    if sample == "n/d":
+        return weighted
+    return sample if sample == weighted else "inconclusivo (depende da ponderação)"
+
+
+def units_at_n3(units: list[Unit], cat: Catalog) -> int:
+    return sum(
+        any(u.tools[t] == "N3" for t in external_tools(u, cat, cat.test_tools)) for u in units
+    )
+
+
 def analyse(pkg: Package, out: Path, args: argparse.Namespace) -> dict[str, Any]:
     rng = np.random.default_rng(args.seed)
     cat = catalog(pkg.gazetteer)
-    units = units_from_detections(pkg.items, pkg.detections, gazetteer=pkg.gazetteer)
+    items, detections, n_automated = human_corpus(pkg, args.keep_bots)
+    units = units_from_detections(items, detections)
+    item_w, w_info = design_weights(pkg)
+    pair_w = pair_weights(items, detections, item_w)
     m = Macros()
     for name, value in (
         ("ResMinIdade", fmt_int(args.min_age_months)),
@@ -1010,6 +1349,7 @@ def analyse(pkg: Package, out: Path, args: argparse.Namespace) -> dict[str, Any]
         ("ResLimiarTau", fmt_float(args.tau_threshold, 1)),
         ("ResLimiarRho", fmt_float(args.rho_threshold, 1)),
         ("ResMinPar", fmt_int(args.min_together)),
+        ("ResTopoPct", fmt_int(100 * args.top_share)),
     ):
         m.set(name, value)
 
@@ -1033,6 +1373,7 @@ def analyse(pkg: Package, out: Path, args: argparse.Namespace) -> dict[str, Any]
     )
     m.set("ResDataMin", dates[0].strftime("%m/%Y") if dates else "n/d")
     m.set("ResDataMax", dates[-1].strftime("%m/%Y") if dates else "n/d")
+    m.set("ResItensAutomaticos", fmt_int(n_automated))
     m.set("ResUnidades", fmt_int(len(units)))
     m.set("ResUnidadesGithub", fmt_int(sum(u.source == "github" for u in units)))
     m.set("ResDeteccoes", fmt_int(len(pkg.detections)))
@@ -1045,6 +1386,7 @@ def analyse(pkg: Package, out: Path, args: argparse.Namespace) -> dict[str, Any]
         m.set("ResPrismaIdentificados", fmt_int(sum((flow.get("identified") or {}).values())))
         m.set("ResPrismaFiltrados", fmt_int(sum((flow.get("filtered") or {}).values())))
         m.set("ResPrismaDuplicatas", fmt_int(sum((flow.get("duplicates") or {}).values())))
+        m.set("ResPrismaNaoExaminados", fmt_int(sum((flow.get("sampled_out") or {}).values())))
         for key, macro in (
             ("screened", "ResPrismaTriagem"),
             ("included", "ResPrismaIncluidos"),
@@ -1052,23 +1394,24 @@ def analyse(pkg: Package, out: Path, args: argparse.Namespace) -> dict[str, Any]
             ("coded", "ResPrismaCodificados"),
         ):
             m.set(macro, fmt_int(flow.get(key) or 0))
+    weighted = bool(w_info["available"])
+    m.set(
+        "ResPesos",
+        "ponderado pelas frações de amostragem" if weighted else "sem pesos",
+        "" if weighted else "manifest without per-query totals",
+    )
+    m.set("ResPesoMax", fmt_float(w_info["max"], 1))
+    m.set("ResNEfetivo", fmt_int(w_info["n_eff"]))
+    m.set("ResItensPesoDesconhecido", fmt_int(w_info["unknown_items"]))
 
     # QP1
-    rows = pyramid(units, cat)
+    rows = pyramid(units, cat, pair_w)
     present = [r for r in rows if r["total"] > 0]
     m.set("ResFerramentasTeste", fmt_int(len(cat.test_tools)))
     m.set("ResFerramentasDetectadas", fmt_int(len(present)))
     with_tool = [u for u in units if external_tools(u, cat, cat.test_tools)]
     m.set("ResUnidadesComFerramenta", fmt_int(len(with_tool)))
-    m.set(
-        "ResUnidadesComNTres",
-        fmt_int(
-            sum(
-                any(u.tools[t] == "N3" for t in external_tools(u, cat, cat.test_tools))
-                for u in units
-            )
-        ),
-    )
+    m.set("ResUnidadesComNTres", fmt_int(units_at_n3(units, cat)))
     m.set("ResSelfPares", fmt_int(sum(r["self"] for r in rows)))
     for key, macro in (("n3_ext", "ResTopNTres"), ("n2", "ResTopNDois"), ("n1", "ResTopNUm")):
         best = max(rows, key=lambda r, k=key: (r[k], -r["rank_n3_ext"]))
@@ -1088,13 +1431,29 @@ def analyse(pkg: Package, out: Path, args: argparse.Namespace) -> dict[str, Any]
     m.set("ResTauDoisTresHi", fmt_float(taus["DoisTres"]["hi"]))
     m.set("ResTauUmDois", fmt_float(taus["UmDois"]["tau"]))
     m.set("ResTauFerramentas", fmt_int(taus["UmTres"]["tools"]))
-    tau13 = taus["UmTres"]["tau"]
-    m.set(
-        "ResPUmVeredito",
-        "n/d"
-        if math.isnan(tau13)
-        else ("sustenta P1" if tau13 < args.tau_threshold else "não sustenta P1"),
+    p1 = verdict(taus["UmTres"]["tau"], args.tau_threshold, "P1")
+    m.set("ResPUmVeredito", p1)
+    # The same correlation on design-weighted counts: what the sources hold, not what
+    # a 100-item cap left in the sample. P1 is read as supported when both agree.
+    tau_w = None
+    if weighted:
+        wmat = weight_matrix(units, cat.test_tools, pair_w)
+        tau_w = kendall_ci(matrix, 1, 3, args.bootstrap, rng, weights=wmat)
+        m.set("ResTauUmTresPond", fmt_float(tau_w["tau"]))
+        m.set("ResTauUmTresPondLo", fmt_float(tau_w["lo"]))
+        m.set("ResTauUmTresPondHi", fmt_float(tau_w["hi"]))
+    p1_w = verdict(tau_w["tau"], args.tau_threshold, "P1") if tau_w else "n/d"
+    m.set("ResPUmVereditoPond", p1_w)
+    m.set("ResPUmConclusao", conclusion(p1, p1_w))
+    # Sensitivity to the N3 rule: the bare name of a tool in a CI command as adoption.
+    loose_units = units_from_detections(
+        items, name_as_adoption(detections, sustained_repos(pkg.repos))
     )
+    tau_loose = kendall_ci(
+        level_matrix(loose_units, cat.test_tools, cat), 1, 3, args.bootstrap, rng
+    )
+    m.set("ResTauUmTresNome", fmt_float(tau_loose["tau"]))
+    m.set("ResUnidadesComNTresNome", fmt_int(units_at_n3(loose_units, cat)))
     talked, adopted = gap(rows)
     write_csv(rows, out / "qp1_piramide.csv")
     m.set("ResMaisFaladas", join_pt([cat.display(t) for t in talked]))
@@ -1154,35 +1513,41 @@ def analyse(pkg: Package, out: Path, args: argparse.Namespace) -> dict[str, Any]
 
     # QP3
     eng, excluded, bug_issues = engagement_items(
-        pkg, args.min_age_months, args.with_repos, args.keep_bots
+        pkg,
+        args.min_age_months,
+        args.with_repos,
+        args.keep_bots,
+        {item_id: w.weight for item_id, w in item_w.items()},
     )
     m.set("ResEngItens", fmt_int(len(eng)))
     m.set("ResEngExclIdade", fmt_int(excluded["idade"]))
     m.set("ResEngExclBot", fmt_int(excluded["bot"]))
     m.set("ResEngExclDor", fmt_int(excluded["dor"]))
     m.set("ResEngExclSemMetrica", fmt_int(excluded["sem_metrica"]))
+    m.set("ResEngEstatistica", "média")
+    m.set("ResEngPctPiso", fmt_pct(sum(it.floor for it in eng), len(eng)))
     test_set, method_set = set(cat.test_tools), set(cat.method_names)
     tools_of: dict[str, set[str]] = defaultdict(set)
     methods_of: dict[str, set[str]] = defaultdict(set)
-    for d in pkg.detections:
+    for d in detections:
         if d.entry_type == "tool" and d.entry_id in test_set:
             tools_of[d.item_id].add(d.entry_id)
         elif d.entry_type == "method" and d.entry_id in method_set:
             methods_of[d.item_id].add(d.entry_id)
-    tool_eng = engagement_by(eng, tools_of, args.min_n, args.bootstrap, rng)
-    method_eng = engagement_by(eng, methods_of, args.min_n, args.bootstrap, rng)
+    tool_eng = engagement_by(eng, tools_of, args.min_n, args.bootstrap, rng, args.top_share)
+    method_eng = engagement_by(eng, methods_of, args.min_n, args.bootstrap, rng, args.top_share)
     write_csv(tool_eng, out / "qp3_engajamento_ferramentas.csv")
     write_csv(method_eng, out / "qp3_engajamento_metodos.csv")
-    tool_ok = [r for r in tool_eng if "median" in r]
-    method_ok = [r for r in method_eng if "median" in r]
+    tool_ok = [r for r in tool_eng if "mean" in r]
+    method_ok = [r for r in method_eng if "mean" in r]
     m.set("ResEngFerramentas", fmt_int(len(tool_ok)))
     m.set("ResEngMetodos", fmt_int(len(method_ok)))
     if tool_ok:
         m.set("ResEngTopFerramenta", cat.display(tool_ok[0]["entry"]))
-        m.set("ResEngTopFerramentaMed", fmt_float(tool_ok[0]["median"]))
+        m.set("ResEngTopFerramentaMed", fmt_float(tool_ok[0]["mean"]))
     if method_ok:
         m.set("ResEngTopMetodo", cat.display(method_ok[0]["entry"]))
-        m.set("ResEngTopMetodoMed", fmt_float(method_ok[0]["median"]))
+        m.set("ResEngTopMetodoMed", fmt_float(method_ok[0]["mean"]))
     keep = [r["entry"] for r in tool_ok]
     groups: dict[str, list[float]] = defaultdict(list)
     for it in eng:
@@ -1197,20 +1562,35 @@ def analyse(pkg: Package, out: Path, args: argparse.Namespace) -> dict[str, Any]
     m.set("ResDunnSig", fmt_int(sum(r["p_holm"] < 0.05 for r in kw.get("pairs", []))))
     m.set("ResDunnPares", fmt_int(len(kw.get("pairs", []))))
 
-    adoption = {r["tool"]: r["n3_ext"] for r in rows}
-    medians = {r["entry"]: r["median"] for r in tool_ok}
-    rho, rho_p, rho_n = rho_with_adoption(medians, adoption)
+    # P2: the mean of E per tool against external N3 (ADR-059). The median, first
+    # registered, is the same for every tool when most issues have no reaction.
+    adoption = {r["tool"]: float(r["n3_ext"]) for r in rows}
+    means = scores_for(eng, tools_of, args.min_n, "mean")
+    rho, rho_p, rho_n = rho_with_adoption(means, adoption)
+    rho_lo, rho_hi = rho_ci(eng, tools_of, means, adoption, args.bootstrap, rng)
     m.set("ResRho", fmt_float(rho))
+    m.set("ResRhoLo", fmt_float(rho_lo))
+    m.set("ResRhoHi", fmt_float(rho_hi))
     m.set("ResRhoP", fmt_p(rho_p))
     m.set("ResRhoN", fmt_int(rho_n))
-    m.set(
-        "ResPDoisVeredito",
-        "n/d"
-        if math.isnan(rho)
-        else ("sustenta P2" if abs(rho) < args.rho_threshold else "não sustenta P2"),
+    p2 = verdict(rho, args.rho_threshold, "P2", absolute=True)
+    m.set("ResPDoisVeredito", p2)
+    rho_w = math.nan
+    if weighted:
+        adoption_w = {r["tool"]: float(r["n3_ext_w"]) for r in rows}
+        rho_w, _, _ = rho_with_adoption(scores_for(eng, tools_of, args.min_n, "mean_w"), adoption_w)
+        m.set("ResRhoPond", fmt_float(rho_w))
+    p2_w = verdict(rho_w, args.rho_threshold, "P2", absolute=True)
+    m.set("ResPDoisVereditoPond", p2_w)
+    m.set("ResPDoisConclusao", conclusion(p2, p2_w))
+    rho_median, _, _ = rho_with_adoption(scores_for(eng, tools_of, args.min_n, "median"), adoption)
+    m.set("ResRhoMediana", fmt_float(rho_median))
+    rho_top, _, _ = rho_with_adoption(
+        scores_for(eng, tools_of, args.min_n, "top", args.top_share), adoption
     )
+    m.set("ResRhoTopo", fmt_float(rho_top))
     no_listicle = [it for it in eng if len(tools_of.get(it.id, ())) < args.listicle_k]
-    rho_nl, _, _ = rho_with_adoption(medians_for(no_listicle, tools_of, args.min_n), adoption)
+    rho_nl, _, _ = rho_with_adoption(scores_for(no_listicle, tools_of, args.min_n), adoption)
     m.set("ResRhoSemListicle", fmt_float(rho_nl))
     allowed = non_truncated_queries(pkg.manifest)
     if allowed is None:
@@ -1220,33 +1600,33 @@ def analyse(pkg: Package, out: Path, args: argparse.Namespace) -> dict[str, Any]
     else:
         subset = [it for it in eng if (it.source, it.query) in allowed]
         n_trunc = len(subset)
-        rho_nt, _, _ = rho_with_adoption(medians_for(subset, tools_of, args.min_n), adoption)
+        rho_nt, _, _ = rho_with_adoption(scores_for(subset, tools_of, args.min_n), adoption)
         m.set("ResRhoNaoTruncadas", fmt_float(rho_nt))
         m.set("ResItensNaoTruncadas", fmt_int(n_trunc))
-    nb = nb_robustness(eng, tools_of, keep, medians)
+    nb = nb_robustness(eng, tools_of, keep, means)
     m.set(
         "ResNbRho",
-        fmt_float(nb.get("rho_with_median")) if nb.get("status") == "ok" else "n/d",
+        fmt_float(nb.get("rho_with_mean")) if nb.get("status") == "ok" else "n/d",
         nb.get("status", ""),
     )
-    if medians:
-        med_e = float(np.median(list(medians.values())))
-        med_a = float(np.median([adoption[t] for t in medians]))
+    if means:
+        mid_e = float(np.median(list(means.values())))
+        mid_a = float(np.median([adoption[t] for t in means]))
         quad = [
             {
                 "tool": t,
-                "median_e": medians[t],
-                "n3_ext": adoption[t],
-                "quadrant": ("alto E" if medians[t] > med_e else "baixo E")
+                "mean_e": round(means[t], 4),
+                "n3_ext": int(adoption[t]),
+                "quadrant": ("alto E" if means[t] > mid_e else "baixo E")
                 + " / "
-                + ("alta adoção" if adoption[t] > med_a else "baixa adoção"),
+                + ("alta adoção" if adoption[t] > mid_a else "baixa adoção"),
             }
-            for t in sorted(medians)
+            for t in sorted(means)
         ]
         write_csv(quad, out / "qp3_quadrantes.csv")
         talked_q = sorted(
             (q for q in quad if q["quadrant"] == "alto E / baixa adoção"),
-            key=lambda q: -q["median_e"],
+            key=lambda q: -q["mean_e"],
         )[:3]
         adopted_q = sorted(
             (q for q in quad if q["quadrant"] == "baixo E / alta adoção"),
@@ -1263,10 +1643,10 @@ def analyse(pkg: Package, out: Path, args: argparse.Namespace) -> dict[str, Any]
         m.set("ResPTresLo", fmt_float(p3["lo"], 3))
         m.set("ResPTresHi", fmt_float(p3["hi"], 3))
         m.set("ResPTresP", fmt_p(p3["p"]))
-        verdict = "sustenta P3" if p3["lo"] > 0 else "não sustenta P3"
+        p3_verdict = "sustenta P3" if p3["lo"] > 0 else "não sustenta P3"
     else:
-        verdict = "n/d"
-    m.set("ResPTresVeredito", verdict)
+        p3_verdict = "n/d"
+    m.set("ResPTresVeredito", p3_verdict)
     pain_rows = pain(bug_issues, cat)
     write_csv(pain_rows, out / "qp3_dor.csv")
     m.set("ResDorIssues", fmt_int(len(bug_issues)))
@@ -1295,15 +1675,26 @@ def analyse(pkg: Package, out: Path, args: argparse.Namespace) -> dict[str, Any]
         "items_by_source": dict(by_source),
         "items_by_source_kind": dict(by_kind),
         "units": len(units),
+        "automated_items": n_automated,
+        "weights": w_info,
         "kendall": taus,
+        "kendall_weighted": tau_w,
+        "kendall_name_as_n3": tau_loose,
+        "p1": {"sample": p1, "weighted": p1_w, "conclusion": conclusion(p1, p1_w)},
         "kruskal": {k: v for k, v in kw.items() if k != "pairs"},
         "spearman": {
+            "statistic": "mean of E per tool",
             "rho": rho,
+            "ci95": [rho_lo, rho_hi],
             "p": rho_p,
             "tools": rho_n,
+            "rho_weighted": rho_w,
+            "rho_median": rho_median,
+            "rho_top_share": rho_top,
             "rho_without_listicles": rho_nl,
             "non_truncated_items": n_trunc,
         },
+        "p2": {"sample": p2, "weighted": p2_w, "conclusion": conclusion(p2, p2_w)},
         "negative_binomial": nb,
         "p3": p3,
         "engagement_excluded": dict(excluded),
@@ -1324,6 +1715,7 @@ def vars_text(args: argparse.Namespace, as_dict: bool = False) -> Any:
         "tau_threshold",
         "rho_threshold",
         "min_together",
+        "top_share",
         "with_repos",
         "keep_bots",
         "seed",
@@ -1341,10 +1733,25 @@ def write_tables(
     oracle_rows: list[dict[str, Any]],
     tool_eng: list[dict[str, Any]],
     method_eng: list[dict[str, Any]],
-    adoption: dict[str, int],
+    adoption: dict[str, float],
     args: argparse.Namespace,
 ) -> None:
     present = [r for r in rows if r["total"] > 0][: args.top]
+    # Design-weighted estimates, most adopted first, with the rank in the sample.
+    weighted = sorted(
+        (r for r in rows if r["total"] > 0),
+        key=lambda r: (-r["n3_ext_w"], -r["n2_w"], -r["n1_w"], r["tool"]),
+    )[: args.top]
+    write_table(
+        out / "tab_qp1_pond.tex",
+        [
+            f"{cat.display(r['tool'])} & {fmt_float(r['n3_ext_w'], 1)} & "
+            f"{fmt_float(r['n2_w'], 1)} & {fmt_float(r['n1_w'], 1)} & "
+            f"{fmt_int(r['rank_n3_ext'])} \\\\"
+            for r in weighted
+        ],
+        TABLE_COLUMNS["tab_qp1_pond"],
+    )
     write_table(
         out / "tab_qp1.tex",
         [
@@ -1391,22 +1798,22 @@ def write_tables(
     write_table(
         out / "tab_qp3.tex",
         [
-            f"{cat.display(r['entry'])} & {fmt_int(r['n'])} & {fmt_float(r['median'])} "
+            f"{cat.display(r['entry'])} & {fmt_int(r['n'])} & {fmt_float(r['mean'])} "
             f"[{fmt_float(r['lo'])}; {fmt_float(r['hi'])}] & "
             f"{fmt_int(adoption.get(r['entry'], 0))} \\\\"
             for r in tool_eng
-            if "median" in r
+            if "mean" in r
         ][: args.top],
         TABLE_COLUMNS["tab_qp3"],
     )
     write_table(
         out / "tab_qp3_metodos.tex",
         [
-            f"{cat.display(r['entry'])} & {fmt_int(r['n'])} & {fmt_float(r['median'])} "
+            f"{cat.display(r['entry'])} & {fmt_int(r['n'])} & {fmt_float(r['mean'])} "
             f"[{fmt_float(r['lo'])}; {fmt_float(r['hi'])}] & "
             f"{ORACLE_LABEL.get(cat.method_rungs.get(r['entry'], ''), '---')} \\\\"
             for r in method_eng
-            if "median" in r
+            if "mean" in r
         ],
         TABLE_COLUMNS["tab_qp3_metodos"],
     )
@@ -1492,9 +1899,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--tau-threshold", type=float, default=0.5)
     ap.add_argument("--rho-threshold", type=float, default=0.4)
     ap.add_argument("--min-together", type=int, default=5)
+    ap.add_argument(
+        "--top-share",
+        type=float,
+        default=0.1,
+        help="QP3 sensitivity: an item is in the top of its stratum above this share",
+    )
     ap.add_argument("--top", type=int, default=15, help="rows in the LaTeX tables")
     ap.add_argument("--with-repos", action="store_true", help="QP3: include GitHub repos (stars)")
-    ap.add_argument("--keep-bots", action="store_true", help="QP3: keep automated issues")
+    ap.add_argument("--keep-bots", action="store_true", help="keep automated GitHub issues")
     ap.add_argument("--seed", type=int, default=20261031)
     args = ap.parse_args(argv)
     if not args.pending and args.package is None:

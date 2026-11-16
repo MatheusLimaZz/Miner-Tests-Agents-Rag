@@ -300,6 +300,8 @@ class Manifest(BaseModel):
     env_overrides: list[str] = []
     # Command-line options that shape the sample (e.g. limit, per_query_limit).
     run_options: dict[str, Any] = {}
+    # The code that collected: `git_commit` and `git_dirty` (msrkit.provenance.code_state).
+    code: dict[str, Any] = {}
 
 
 # ---------------------------------------------------------------------------

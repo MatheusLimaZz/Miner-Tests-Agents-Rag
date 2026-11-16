@@ -1,0 +1,34 @@
+tool,name,family,applies_to,n3_ext,n2,n1,self,rag,agente,n3_ext_w,n2_w,n1_w,total,rank_n3_ext,rank_n2,rank_n1,rank_n3_ext_w,log_ratio
+promptfoo,promptfoo,avaliacao-llm-rag,rag/agente,29,144,68,4,23,52,168.3,2671.7,576.9,241,1,5,6,1,0.36172783601759284
+garak,garak,guardrails-seguranca,rag/agente,12,43,20,1,9,16,20.9,84.6,129.2,75,2,8,10,5,0.2082759424270825
+deepeval,DeepEval,avaliacao-llm-rag,rag/agente,10,170,100,2,84,86,48.5,5331.5,495.4,280,3,4,2,2,0.9629286886244175
+inspect-ai,Inspect AI,avaliacao-llm-rag,rag/agente,9,63,17,4,8,22,10.7,1017.9,398.9,89,4,6,13,9,0.25527250510330607
+ragas,Ragas,avaliacao-llm-rag,rag,6,304,173,1,202,102,29.7,14237.9,768.2,483,5,1,1,4,1.3954512082683428
+lm-eval-harness,lm-evaluation-harness,avaliacao-llm-rag,rag/agente,5,62,92,1,11,23,19.2,5505.2,294.7,159,6,7,5,6,1.1903316981702914
+swe-bench,SWE-bench,agentes,agente,5,38,62,3,20,65,15.2,463.0,474.8,105,6,9,7,8,1.021189299069938
+bfcl,Berkeley Function Calling Leaderboard,agentes,agente,5,8,19,0,8,13,5.3,10.5,94.6,32,6,22,11,14,0.5228787452803376
+tau-bench,tau-bench,agentes,agente,5,6,9,0,6,11,5.0,6.0,19.7,20,6,25,18,15,0.2218487496163564
+langfuse,Langfuse,tracing-observabilidade,rag/agente,4,178,96,6,59,97,44.5,5021.1,691.4,278,10,3,4,3,1.287801729930226
+langsmith,LangSmith,tracing-observabilidade,rag/agente,3,208,100,17,96,121,17.9,6861.3,710.9,311,11,2,2,7,1.4022613824546801
+arize-phoenix,Arize Phoenix,tracing-observabilidade,rag/agente,3,22,36,2,27,33,3.0,342.4,259.6,61,11,13,8,16,0.9661417327390326
+giskard,Giskard,avaliacao-llm-rag,rag/agente,3,8,13,3,8,7,3.0,9.2,49.4,24,11,22,15,16,0.5440680443502757
+agentdojo,AgentDojo,agentes,agente,2,28,5,1,3,13,7.7,103.0,54.2,35,14,11,26,10,0.3010299956639812
+guardrails-ai,Guardrails AI,guardrails-seguranca,rag/agente,2,16,7,23,4,5,2.0,619.6,29.7,25,14,15,23,18,0.4259687322722811
+mteb,MTEB,recuperacao,rag,2,10,6,4,5,3,6.6,15.5,18.8,18,14,18,25,11,0.36797678529459443
+autoevals,autoevals,avaliacao-llm-rag,rag/agente,2,10,3,1,3,4,2.0,592.4,16.7,15,14,18,28,18,0.12493873660829993
+pytrec-eval,pytrec_eval,recuperacao,rag,2,8,2,0,3,1,6.5,328.8,2.0,12,14,22,29,12,0.0
+ir-measures,ir_measures,recuperacao,rag,2,6,2,0,4,1,2.0,20.3,2.0,10,14,25,29,18,0.0
+nemo-guardrails,NeMo Guardrails,guardrails-seguranca,rag/agente,1,33,13,1,13,12,1.0,631.6,43.9,47,20,10,15,22,0.8450980400142568
+pyrit,PyRIT,guardrails-seguranca,rag/agente,1,17,9,2,6,8,1.8,25.8,126.6,27,20,14,18,21,0.6989700043360189
+beir,BEIR,recuperacao,rag,1,14,8,1,11,5,5.5,361.8,17.9,23,20,16,22,13,0.6532125137753437
+llm-guard,LLM Guard,guardrails-seguranca,rag/agente,1,10,9,0,3,6,1.0,28.6,22.7,20,20,18,18,22,0.6989700043360189
+agentevals,agentevals,agentes,agente,1,5,5,2,1,8,1.0,54.4,122.0,11,20,28,26,22,0.47712125471966244
+openai-evals,OpenAI Evals,avaliacao-llm-rag,rag/agente,1,0,18,1,8,15,1.0,0.0,151.0,19,20,31,12,22,0.9777236052888477
+opik,Opik,tracing-observabilidade,rag/agente,0,25,10,3,10,12,0.0,516.3,40.2,35,26,12,17,26,1.0413926851582251
+trulens,TruLens,avaliacao-llm-rag,rag/agente,0,11,26,1,23,16,0.0,127.9,94.3,37,26,17,9,26,1.4313637641589874
+webarena,WebArena,agentes,agente,0,9,17,1,7,17,0.0,9.0,49.4,26,26,21,13,26,1.255272505103306
+ranx,ranx,recuperacao,rag,0,6,1,1,2,0,0.0,10.5,1.0,7,26,25,33,26,0.3010299956639812
+ragchecker,RAGChecker,avaliacao-llm-rag,rag,0,4,2,0,4,1,0.0,4.0,2.0,6,26,29,29,26,0.47712125471966244
+continuous-eval,continuous-eval,avaliacao-llm-rag,rag,0,1,2,0,2,2,0.0,1.0,2.0,3,26,30,29,26,0.47712125471966244
+agentbench,AgentBench,agentes,agente,0,0,9,1,4,9,0.0,0.0,95.0,9,26,31,18,26,1.0
+uptrain,UpTrain,avaliacao-llm-rag,rag/agente,0,0,7,1,6,3,0.0,0.0,14.5,7,26,31,23,26,0.9030899869919435

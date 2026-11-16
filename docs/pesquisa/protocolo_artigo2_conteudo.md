@@ -69,7 +69,7 @@ As QPs abaixo reorganizam as RQ1–RQ5 do E2 v2 e acrescentam engajamento, que n
 |---|---|---|---|
 | H2 | A grande maioria dos oráculos é atômica (limiar 0,75) | binomial exato unilateral (já em `analysis.py`) | E2 v2 |
 | P1 | O ranking por menção (N1) difere do ranking por adoção em CI (N3) | Kendall τ entre rankings; IC por bootstrap | QP1.3; na `d28a`, ragas lidera N2 e promptfoo lidera N3 |
-| P2 | Engajamento e adoção são fracamente correlacionados entre ferramentas | Spearman ρ (mediana de engajamento × N3 externo) | QP3 |
+| P2 | Engajamento e adoção são fracamente correlacionados entre ferramentas | Spearman ρ (média de E × N3 externo; a mediana fica no piso, ADR-059) | QP3 |
 | P3 | Conteúdo sobre agentes tem engajamento maior que conteúdo sobre RAG em 2025–2026, controlando fonte e idade | modelo da seção 6.3 | QP3, exploratória |
 
 Os limiares de P1 e P2 ficam como `[DECIDIR]`; por exemplo, τ < 0,5 e ρ < 0,4.
@@ -208,7 +208,8 @@ São duas trilhas complementares:
    - análise principal só com itens de idade ≥ 3 meses `[DECIDIR]`;
    - sensibilidade com engajamento por mês ou com a idade como covariável.
 4. **Por ferramenta e por método:**
-   - mediana de E com IC de 95% por bootstrap (10.000 reamostragens);
+   - média de E com IC de 95% por bootstrap (10.000 reamostragens). E é um percentil de posto médio, então a média é a chance de um item da ferramenta superar outro item do mesmo estrato (0,5 = item típico);
+   - a mediana e a proporção de itens no piso do estrato vão junto, só para descrever: a maioria das issues não tem reação, e a mediana é o mesmo valor para todas as ferramentas (ADR-059);
    - mínimo de n ≥ 10 itens para reportar `[DECIDIR]`.
 5. **Comparação:**
    - Kruskal–Wallis entre ferramentas ou famílias, com pós-teste de Dunn e correção de Holm;
@@ -219,13 +220,16 @@ São duas trilhas complementares:
    - sensibilidade 1: exclua *listicles* (≥4 ferramentas citadas);
    - sensibilidade 2: exclua conteúdo de fornecedor (`q_objetividade` ≠ `sem-vinculo`).
 7. **Engajamento × adoção (P2):**
-   - Spearman ρ entre a mediana de E e o N3 externo;
+   - Spearman ρ entre a média de E e o N3 externo, com IC por bootstrap;
+   - sensibilidade: ρ com a proporção de itens no topo do estrato (10%), e ρ com a mediana, que era a estatística registrada antes;
    - gráfico de quadrantes: muito falado e pouco adotado, pouco falado e muito adotado.
 8. **Engajamento "de dor":**
    - as consultas `issues-ancora` (`repo:{repo} is:issue label:bug`) trazem os bugs das próprias ferramentas;
    - reações e comentários nessas issues medem atrito, e o conteúdo alimenta a QP4;
    - **ressalva:** essas issues refletem a comunidade de cada ferramenta, não o uso em geral.
 9. **Viés declarado:** a busca do GitHub ordena por relevância e trunca, o que favorece itens populares. Compare os resultados só com consultas não truncadas.
+10. **Duas leituras (ADR-058, ADR-059):** cada consulta que para no limite de itens é uma amostra, com fração conhecida (examinados ÷ total da fonte). P1 e P2 são calculadas na amostra e com pesos de amostragem, e só se sustentam se as duas leituras concordarem. Os pesos corrigem a repartição entre estratos (45% das issues de 2023 contra 2% das de 2026, na 015e), não a ordem em que a fonte devolve os resultados dentro de cada um.
+11. **Issues automáticas:** as de robôs saem na coleta (`filter_bots`); boletins periódicos publicados por contas comuns saem na análise, pelo título. As duas contagens entram no artigo.
 
 ### 6.4 QP4: modos de falha e cobertura (A3)
 
@@ -258,7 +262,7 @@ São duas trilhas complementares:
   - A pré-avaliação por LLM não substitui a codificação.
 - **Externa:**
   - São 6 fontes, sem Reddit, X, Discord e LinkedIn, que concentram muita discussão de praticantes. Declare a exclusão e o motivo.
-  - O inglês domina: o estrato PT tem só 90 itens na `d28a`, o que permite apenas descrição, sem conclusões sobre a comunidade lusófona.
+  - Só inglês: o léxico em português trouxe 90 itens na `d28a` e 63 na `d855` e saiu do protocolo (ADR-050). Os achados valem para a comunidade que publica em inglês.
   - Janela de 01/2023 a 08/2026, com o GitHub somando ≈81% dos itens.
 - **Conclusão:**
   - Comparações múltiplas (corrigidas por Holm).

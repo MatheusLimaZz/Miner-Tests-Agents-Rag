@@ -17,8 +17,6 @@ from typing import TYPE_CHECKING, Any, ClassVar
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-from pydantic import HttpUrl
-
 from msrkit.adapters.base import BaseAdapter
 from msrkit.keywords import match_terms
 from msrkit.models import (
@@ -170,8 +168,12 @@ class HackerNewsAdapter(BaseAdapter):
         title = p.get("title") or p.get("story_title")
         body = p.get("comment_text") or p.get("story_text")
 
-        oid = str(p.get("objectID") or raw.native_id or "")
-        url = HttpUrl(f"https://news.ycombinator.com/item?id={oid}")
+        # Build URL with safe HTTP/HTTPS scheme check
+        raw_url = p.get("url")
+        if raw_url and (raw_url.startswith("http://") or raw_url.startswith("https://")):
+            url = raw_url
+        else:
+            url = f"https://news.ycombinator.com/item?id={p.get('objectID', '')}"
 
         created_at = None
         created_at_i = p.get("created_at_i")

@@ -26,12 +26,13 @@ from __future__ import annotations
 import hashlib
 import json
 import platform
-import subprocess
 import zipfile
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from msrkit import __version__
+from msrkit.config import protocol_sha256
+from msrkit.provenance import code_state
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -58,18 +59,18 @@ def redact_item(item: Item, policy: str, keep_authors: bool, salt: str) -> dict[
     return data
 
 
-def _git_commit() -> str | None:
-    try:
-        out = subprocess.run(
-            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True, timeout=10
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    return out.stdout.strip() or None
-
-
 def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def _lf(data: bytes) -> bytes:
+    """Text with LF line endings, as the repository stores it.
+
+    A Windows checkout holds CRLF. Packaged that way, the protocol's hash in the package
+    differed from the one in the manifest and in the report, which hash the LF form
+    (msrkit.config.protocol_sha256), although the three were the same file.
+    """
+    return data.replace(b"\r\n", b"\n")
 
 
 def _strip_repo_contents(line: str) -> str:
@@ -139,7 +140,39 @@ def zenodo_metadata(
     }
 
 
-def readme(run_id: str, contents: dict[str, int], protocol_name: str, keep_authors: bool) -> str:
+def _code_note(packaged: dict[str, Any], collected: dict[str, Any]) -> str:
+    """Which code produced the package, in words: commits, and whether they reproduce it."""
+
+    def describe(state: dict[str, Any]) -> str:
+        commit = state.get("git_commit")
+        if not commit:
+            return "an unknown commit (not run from a git checkout)"
+        dirty = " **with uncommitted changes**" if state.get("git_dirty") else ""
+        return f"commit `{commit[:12]}`{dirty}"
+
+    note = f"The package was built by {describe(packaged)}."
+    if collected:
+        same = collected.get("git_commit") == packaged.get("git_commit")
+        note += (
+            " The collection ran on the same commit."
+            if same
+            else f" The collection ran on {describe(collected)}."
+        )
+    if packaged.get("git_dirty") or collected.get("git_dirty"):
+        note += (
+            " Uncommitted changes mean the commit alone does not reproduce the run: commit"
+            " and build the package again (`msrkit package`) before publishing."
+        )
+    return note
+
+
+def readme(
+    run_id: str,
+    contents: dict[str, int],
+    protocol_name: str,
+    keep_authors: bool,
+    code_note: str = "",
+) -> str:
     rows = "\n".join(f"| `{d}/` | {n} |" for d, n in sorted(contents.items()))
     authors = (
         "kept as public handles"
@@ -157,7 +190,18 @@ Protocol: `{protocol_name}` · MSR-Kit {__version__}
 ## How to verify
 
 `sha256sum -c SHA256SUMS` checks every file. `package_manifest.json` records the
-MSR-Kit version, git commit, Python version and protocol hash of the run.
+MSR-Kit version, git commit, Python version and protocol hash of the run. The files
+in `protocol/` have LF line endings, so the SHA-256 of the protocol file here is the
+`protocol_sha256` of `run/manifest.json` and of the mining report.
+
+{code_note}
+
+## Sampling weights
+
+A query that stopped at the run's item limit is a sample. `run/manifest.json` keeps,
+per query, the items kept, the items a local filter dropped and the results the source
+reports (`estimated_total`); `msrkit.weights` turns them into the design weight of each
+item (by `provenance.partition`). `reports/relatorio_mineracao.md` has the fractions.
 
 ## Redistribution (protocol §17)
 
@@ -194,14 +238,24 @@ def build_package(
     b = PackageBuilder()
     protocol_sha = None
     if protocol_path is not None and protocol_path.exists():
-        b.add_file(f"protocol/{protocol_path.name}", protocol_path)
-        protocol_sha = _sha256(protocol_path.read_bytes())
+        b.add_bytes(f"protocol/{protocol_path.name}", _lf(protocol_path.read_bytes()))
+        protocol_sha = protocol_sha256(protocol_path)
         for extra in extra_protocol_files or []:
-            b.add_file(f"protocol/{extra.name}", extra)
+            if extra.exists():
+                b.add_bytes(f"protocol/{extra.name}", _lf(extra.read_bytes()))
 
     run_dir = data_dir / "runs" / run_id
     b.add_file("run/manifest.json", run_dir / "manifest.json")
     b.add_file("run/discarded.jsonl", run_dir / "discarded.jsonl")
+    collected_with: dict[str, Any] = {}
+    manifest_sha = None
+    if (run_dir / "manifest.json").exists():
+        try:
+            manifest_data = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+        except ValueError:
+            manifest_data = {}
+        collected_with = manifest_data.get("code") or {}
+        manifest_sha = manifest_data.get("protocol_sha256") or None
 
     lines = [
         json.dumps(redact_item(it, policies.get(it.source, "metadata_only"), keep_authors, salt),
@@ -227,6 +281,9 @@ def build_package(
         if dets:
             lines = [d.model_dump_json() for d in dets]
             b.add_bytes("evidence/detections.jsonl", ("\n".join(lines) + "\n").encode("utf-8"))
+    # What the extraction left out, and what the enrichment was run with.
+    b.add_file("evidence/extract_stats.json", data_dir / "extract" / run_id / "extract_stats.json")
+    b.add_file("evidence/enrich_meta.json", data_dir / "enrich" / run_id / "meta.json")
 
     dec_file = data_dir / "screening" / run_id / "decisions.jsonl"
     if not b.add_file("review/decisions.jsonl", dec_file):
@@ -259,7 +316,13 @@ def build_package(
         folder = name.split("/", 1)[0] if "/" in name else "."
         contents[folder] = contents.get(folder, 0) + 1
     protocol_name = protocol_path.name if protocol_path else "(not found)"
-    b.add_bytes("README.md", readme(run_id, contents, protocol_name, keep_authors).encode())
+    packaged_with = code_state()
+    b.add_bytes(
+        "README.md",
+        readme(
+            run_id, contents, protocol_name, keep_authors, _code_note(packaged_with, collected_with)
+        ).encode(),
+    )
     b.add_bytes(
         ".zenodo.json",
         json.dumps(
@@ -280,10 +343,18 @@ def build_package(
             {
                 "run_id": run_id,
                 "msrkit_version": __version__,
-                "git_commit": _git_commit(),
+                # The code that built the package, and the code that collected (from the
+                # run manifest; empty for runs collected before it was recorded).
+                "git_commit": packaged_with["git_commit"],
+                "git_dirty": packaged_with["git_dirty"],
+                "collected_with": collected_with,
                 "python": platform.python_version(),
                 "protocol": protocol_name,
                 "protocol_sha256": protocol_sha,
+                # False when the protocol file changed since the collection.
+                "protocol_matches_run": (
+                    None if not (protocol_sha and manifest_sha) else protocol_sha == manifest_sha
+                ),
                 "items": len(items),
                 "keep_authors": keep_authors,
                 "created_at": datetime.now(UTC).isoformat(),

@@ -1,0 +1,253 @@
+% Gerado por analysis/artigo2.py — não edite à mão.
+% Pacote: msrkit_2026-11-16T07-29-05Z-ba7b.zip · run_id: 2026-11-16T07-29-05Z-ba7b · base: detecções automáticas
+% Gerado em 2026-11-16 21:24 UTC · parâmetros: min_age_months=3.0, min_n=10, bootstrap=10000, listicle_k=4, tau_threshold=0.5, rho_threshold=0.4, min_together=5, top_share=0.1, with_repos=False, keep_bots=False, seed=20261031
+% parameter --min-age-months
+\newcommand{\ResMinIdade}{3}
+% parameter --min-n
+\newcommand{\ResMinN}{10}
+% parameter --bootstrap
+\newcommand{\ResBoot}{10.000}
+% parameter --listicle-k
+\newcommand{\ResListicle}{4}
+% parameter --tau-threshold
+\newcommand{\ResLimiarTau}{0,5}
+% parameter --rho-threshold
+\newcommand{\ResLimiarRho}{0,4}
+% parameter --min-together
+\newcommand{\ResMinPar}{5}
+% parameter --top-share, as a percentage (top stratum share of QP3)
+\newcommand{\ResTopoPct}{10}
+% run/manifest.json: run_id
+\newcommand{\ResRunId}{2026-11-16T07-29-05Z-ba7b}
+% run/manifest.json: protocol_sha256 (first 12 hex)
+\newcommand{\ResProtocoloSha}{\texttt{fcb9c17a3f60}}
+% run/manifest.json: run_options.per_query_limit
+\newcommand{\ResPerQueryLimit}{100}
+% corpus/items.jsonl: items
+\newcommand{\ResItens}{16.642}
+% corpus/items.jsonl: sources with items
+\newcommand{\ResFontes}{5}
+% corpus/items.jsonl: % of items from GitHub
+\newcommand{\ResPctGithub}{79}
+% corpus/items.jsonl: items with a Portuguese lexicon match
+\newcommand{\ResItensPt}{0}
+% corpus/items.jsonl: earliest created_at (YYYY-MM)
+\newcommand{\ResDataMin}{07/2022}
+% corpus/items.jsonl: latest created_at (YYYY-MM)
+\newcommand{\ResDataMax}{11/2026}
+% units (msrkit.analysis.units_from_detections)
+\newcommand{\ResUnidades}{10.267}
+% units that are GitHub repositories
+\newcommand{\ResUnidadesGithub}{6.850}
+% evidence/detections.jsonl: detections
+\newcommand{\ResDeteccoes}{10.875}
+% evidence/detections.jsonl: tool detections
+\newcommand{\ResDeteccoesFerramenta}{8.094}
+% evidence/detections.jsonl: method detections
+\newcommand{\ResDeteccoesMetodo}{2.781}
+% evidence/github_repos.jsonl: repositories
+\newcommand{\ResReposEnriquecidos}{6.868}
+% evidence/github_repos.jsonl: repositories with error
+\newcommand{\ResReposErro}{0}
+% reports/prisma.json: records identified
+\newcommand{\ResPrismaIdentificados}{79.645}
+% reports/prisma.json: removed by local filters
+\newcommand{\ResPrismaFiltrados}{60.418}
+% reports/prisma.json: duplicates removed
+\newcommand{\ResPrismaDuplicatas}{2.585}
+% reports/prisma.json: screening pool
+\newcommand{\ResPrismaTriagem}{16.642}
+% reports/prisma.json: included after screening
+\newcommand{\ResPrismaIncluidos}{0}
+% reports/prisma.json: without screening decision
+\newcommand{\ResPrismaPendentes}{16.642}
+% reports/prisma.json: coded
+\newcommand{\ResPrismaCodificados}{0}
+% reports/prisma.json: not examined by item-limit queries (est.)
+\newcommand{\ResPrismaNaoExaminados}{321.072}
+% corpus: automated GitHub issues set aside by title (all analyses)
+\newcommand{\ResItensAutomaticos}{93}
+% whether the manifest gives sampling fractions (design weights)
+\newcommand{\ResPesos}{ponderado pelas frações de amostragem}
+% largest design weight of an item
+\newcommand{\ResPesoMax}{487,7}
+% Kish effective sample size of the items
+\newcommand{\ResNEfetivo}{1.634}
+% items of truncated queries without a total (weight 1)
+\newcommand{\ResItensPesoDesconhecido}{199}
+% gazetteer: testing tools (families other than framework-sut)
+\newcommand{\ResFerramentasTeste}{33}
+% QP1: testing tools in >= 1 unit
+\newcommand{\ResFerramentasDetectadas}{33}
+% QP1: units with >= 1 testing tool (self excluded)
+\newcommand{\ResUnidadesComFerramenta}{1.761}
+% QP1: units with >= 1 testing tool at external N3
+\newcommand{\ResUnidadesComNTres}{99}
+% QP1: unit-tool pairs set apart as self
+\newcommand{\ResSelfPares}{88}
+% QP1: top tool by external N3
+\newcommand{\ResTopNTres}{promptfoo}
+% QP1: units of the top tool at external N3
+\newcommand{\ResTopNTresN}{29}
+% QP1: top tool by N2
+\newcommand{\ResTopNDois}{Ragas}
+% QP1: units of the top tool at N2
+\newcommand{\ResTopNDoisN}{304}
+% QP1: top tool by N1 (mention)
+\newcommand{\ResTopNUm}{Ragas}
+% QP1: units of the top tool at N1
+\newcommand{\ResTopNUmN}{173}
+% QP1.3: Kendall tau-b, N1 x external N3 rankings
+\newcommand{\ResTauUmTres}{0,41}
+% QP1.3: bootstrap 95% CI, lower
+\newcommand{\ResTauUmTresLo}{0,25}
+% QP1.3: bootstrap 95% CI, upper
+\newcommand{\ResTauUmTresHi}{0,50}
+% QP1.3: p-value
+\newcommand{\ResTauUmTresP}{0,002}
+% QP1.3: Kendall tau-b, N2 x external N3 rankings
+\newcommand{\ResTauDoisTres}{0,49}
+% QP1.3: bootstrap 95% CI, lower
+\newcommand{\ResTauDoisTresLo}{0,32}
+% QP1.3: bootstrap 95% CI, upper
+\newcommand{\ResTauDoisTresHi}{0,57}
+% QP1.3: Kendall tau-b, N1 x N2 rankings
+\newcommand{\ResTauUmDois}{0,56}
+% QP1.3: tools in the rank correlation
+\newcommand{\ResTauFerramentas}{33}
+% P1 verdict against --tau-threshold (sample counts)
+\newcommand{\ResPUmVeredito}{sustenta P1}
+% QP1.3: Kendall tau-b, N1 x external N3, design-weighted counts
+\newcommand{\ResTauUmTresPond}{0,46}
+% QP1.3 weighted: bootstrap 95% CI, lower
+\newcommand{\ResTauUmTresPondLo}{0,29}
+% QP1.3 weighted: bootstrap 95% CI, upper
+\newcommand{\ResTauUmTresPondHi}{0,57}
+% P1 verdict on the design-weighted counts
+\newcommand{\ResPUmVereditoPond}{sustenta P1}
+% P1: supported only when sample and weighted verdicts agree
+\newcommand{\ResPUmConclusao}{sustenta P1}
+% QP1.3 sensitivity: tau with name-only CI evidence counted as N3
+\newcommand{\ResTauUmTresNome}{0,49}
+% QP1 sensitivity: units at external N3 under that looser rule
+\newcommand{\ResUnidadesComNTresNome}{176}
+% QP1.3: tools most above the diagonal (mention >> adoption)
+\newcommand{\ResMaisFaladas}{TruLens, LangSmith e Ragas}
+% QP1.3: tools most below the diagonal (adoption >> mention)
+\newcommand{\ResMaisAdotadas}{nenhuma}
+% context: framework in most units
+\newcommand{\ResFwTop}{LangChain}
+% context: its units
+\newcommand{\ResFwTopN}{894}
+% context: second framework
+\newcommand{\ResFwSegundo}{LangGraph}
+% context: its units
+\newcommand{\ResFwSegundoN}{547}
+% context: % of units with a testing tool that also use a framework
+\newcommand{\ResPctUnidadesComFw}{34}
+% QP5 preview: Jaccard of tool sets, rag x agente units (detections)
+\newcommand{\ResJaccardDeteccoes}{0,97}
+% QP2: method in most units
+\newcommand{\ResTopMetodo}{LLM-as-a-judge}
+% QP2: its units
+\newcommand{\ResTopMetodoN}{692}
+% QP2: units with >= 1 oracle rung (typical rung of methods)
+\newcommand{\ResUnidadesComOraculo}{1.315}
+% QP2: % pseudo-automatic among units with a rung
+\newcommand{\ResPctPseudo}{53}
+% QP2: % reference
+\newcommand{\ResPctReferencia}{56}
+% QP2: % specified
+\newcommand{\ResPctEspecificado}{15}
+% QP2: % human
+\newcommand{\ResPctHumano}{9}
+% QP2: % derived
+\newcommand{\ResPctDerivado}{3}
+% QP3: eligible discursive items
+\newcommand{\ResEngItens}{7.316}
+% QP3: excluded for age below --min-age-months
+\newcommand{\ResEngExclIdade}{544}
+% QP3: excluded as automated (bot) issues
+\newcommand{\ResEngExclBot}{93}
+% QP3: tool bug issues set apart (pain analysis)
+\newcommand{\ResEngExclDor}{2.518}
+% QP3: excluded without engagement metric or date
+\newcommand{\ResEngExclSemMetrica}{6.171}
+% QP3: tools with n >= --min-n
+\newcommand{\ResEngFerramentas}{18}
+% QP3: methods with n >= --min-n
+\newcommand{\ResEngMetodos}{10}
+% QP3: statistic that summarizes E per tool (ADR-059)
+\newcommand{\ResEngEstatistica}{média}
+% QP3: % of eligible items tied at the lowest value of their stratum
+\newcommand{\ResEngPctPiso}{60}
+% QP3: tool with highest mean engagement
+\newcommand{\ResEngTopFerramenta}{Opik}
+% QP3: its mean E
+\newcommand{\ResEngTopFerramentaMed}{0,59}
+% QP3: method with highest mean engagement
+\newcommand{\ResEngTopMetodo}{LLM-as-a-judge}
+% QP3: its mean E
+\newcommand{\ResEngTopMetodoMed}{0,50}
+% QP3: Kruskal-Wallis H across tools
+\newcommand{\ResKwH}{39,48}
+% QP3: Kruskal-Wallis p-value
+\newcommand{\ResKwP}{0,002}
+% QP3: epsilon squared
+\newcommand{\ResKwEps}{0,040}
+% QP3: Dunn pairs significant after Holm
+\newcommand{\ResDunnSig}{1}
+% QP3: Dunn pairs tested
+\newcommand{\ResDunnPares}{153}
+% P2: Spearman rho, mean E x external N3
+\newcommand{\ResRho}{\ensuremath{-}0,09}
+% P2: bootstrap 95% CI over items (N3 fixed), lower
+\newcommand{\ResRhoLo}{\ensuremath{-}0,30}
+% P2: bootstrap 95% CI over items (N3 fixed), upper
+\newcommand{\ResRhoHi}{0,21}
+% P2: p-value
+\newcommand{\ResRhoP}{0,715}
+% P2: tools in the correlation
+\newcommand{\ResRhoN}{18}
+% P2 verdict against --rho-threshold (sample statistics)
+\newcommand{\ResPDoisVeredito}{sustenta P2}
+% P2: rho, design-weighted mean E x weighted external N3
+\newcommand{\ResRhoPond}{0,17}
+% P2 verdict on the design-weighted statistics
+\newcommand{\ResPDoisVereditoPond}{sustenta P2}
+% P2: supported only when sample and weighted verdicts agree
+\newcommand{\ResPDoisConclusao}{sustenta P2}
+% P2 as first registered: rho with the median E (n/d when it is constant)
+\newcommand{\ResRhoMediana}{n/d}
+% P2 sensitivity: rho with the share of items in the top of their stratum
+\newcommand{\ResRhoTopo}{0,15}
+% P2 sensitivity: rho without listicles
+\newcommand{\ResRhoSemListicle}{\ensuremath{-}0,16}
+% P2 sensitivity: rho with non-truncated queries only
+\newcommand{\ResRhoNaoTruncadas}{\ensuremath{-}0,26}
+% P2 sensitivity: eligible items from non-truncated queries
+\newcommand{\ResItensNaoTruncadas}{2.911}
+% robustness: rho between NB tool effects and mean E — ok
+\newcommand{\ResNbRho}{0,67}
+% QP3 quadrant: high engagement, low adoption
+\newcommand{\ResQuadFalado}{Opik, Arize Phoenix e LangSmith}
+% QP3 quadrant: low engagement, high adoption
+\newcommand{\ResQuadAdotado}{promptfoo, garak e Inspect AI}
+% P3: Cliff's delta, agente x rag items (2025-2026)
+\newcommand{\ResPTresDelta}{0,01}
+% P3: OLS coefficient of agente (E ~ agente + log age + stratum)
+\newcommand{\ResPTresBeta}{0,025}
+% P3: 95% CI lower (HC3)
+\newcommand{\ResPTresLo}{0,005}
+% P3: 95% CI upper (HC3)
+\newcommand{\ResPTresHi}{0,046}
+% P3: p-value
+\newcommand{\ResPTresP}{0,016}
+% P3: items (agente + rag)
+\newcommand{\ResPTresN}{2.253}
+% P3 verdict
+\newcommand{\ResPTresVeredito}{sustenta P3}
+% pain: bug issues of the tools' own repositories
+\newcommand{\ResDorIssues}{2.518}
+% pain: tools with bug issues
+\newcommand{\ResDorFerramentas}{25}

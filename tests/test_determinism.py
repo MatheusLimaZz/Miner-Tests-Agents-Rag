@@ -103,6 +103,16 @@ class TestDeterminism:
         ids2 = [_normalize_raw(r).id for r in raw_items]
         assert ids1 == ids2
 
+    def test_protocol_hash_ignores_line_endings(self, tmp_path: Path) -> None:
+        """A Windows checkout (CRLF) and the CI runner (LF) hash the protocol alike."""
+        from msrkit.config import protocol_sha256
+
+        text = "version: 0\nwindow:\n  since: '2023-01-01'\n"
+        lf, crlf = tmp_path / "lf.yaml", tmp_path / "crlf.yaml"
+        lf.write_bytes(text.encode())
+        crlf.write_bytes(text.replace("\n", "\r\n").encode())
+        assert protocol_sha256(lf) == protocol_sha256(crlf)
+
 
 class TestStorageFeatures:
     def test_list_runs_with_deduped_only(self, tmp_path: Path, raw_items: list[RawItem]) -> None:

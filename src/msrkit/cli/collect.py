@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import json
 import logging
 from datetime import UTC, datetime
@@ -493,7 +492,7 @@ def run(
         SourceUnsupportedError,
     )
     from msrkit.partition import query_key
-    from msrkit.provenance import generate_run_id, save_manifest
+    from msrkit.provenance import code_state, generate_run_id, save_manifest
     from msrkit.storage import ItemStorage, RawStorage
 
     try:
@@ -553,6 +552,7 @@ def run(
                 )
                 if v is not None
             },
+            code=code_state(),
         )
     if config.env_overrides:
         console.print(f"[bold].env:[/bold] {', '.join(config.env_overrides)}")
@@ -694,12 +694,6 @@ def run(
 
         total_source_items = sum(e.items for e in done.values())
         total_source_requests = sum(e.requests for e in done.values())
-        seen_item_ids: set[str] = set()
-        if done:
-            with contextlib.suppress(Exception):
-                seen_item_ids.update(
-                    it.id for it in item_storage.read_items(run_id) if it.source == source_name
-                )
 
         for qi, query in enumerate(queries, 1):
             key = query_key(query)
@@ -711,7 +705,7 @@ def run(
                     f"({total_source_items} items). Skipping remaining queries.[/dim]"
                 )
                 break
-            if not src_cfg.census and total_source_items >= config.limits.max_items_per_source:
+            if total_source_items >= config.limits.max_items_per_source:
                 console.print(
                     f"  [dim]Source '{source_name}' item limit reached "
                     f"({total_source_items} items). Skipping remaining queries.[/dim]"
@@ -724,14 +718,9 @@ def run(
                 )
                 break
 
-            if src_cfg.census:
-                remaining_for_source = limit - total_source_items if limit is not None else 50000
-            else:
-                remaining_for_source = config.limits.max_items_per_source - total_source_items
-                if limit is not None:
-                    remaining_for_source = min(
-                        remaining_for_source, max(0, limit - total_source_items)
-                    )
+            remaining_for_source = config.limits.max_items_per_source - total_source_items
+            if limit is not None:
+                remaining_for_source = min(remaining_for_source, max(0, limit - total_source_items))
             query.limit = min(query.limit or 5000, remaining_for_source)
 
             query_label = f"[{query.kind}] " if query.kind else ""
@@ -754,8 +743,9 @@ def run(
             query_display = " ".join(query_display_parts)
 
             try:
-                if strata and query.estimated_total is None and adapter.stratifies_by_date(query):
-                    # Size of the stratum at the source: the sampling weight (ADR-055).
+                if strata and query.estimated_total is None and adapter.countable(query):
+                    # How many items the query matches at the source: with what was
+                    # examined, the sampling fraction of the stratum (ADR-055, ADR-057).
                     query.estimated_total = adapter.population(query)
                 for raw_item in adapter.search(query):
                     partition_hash = key
@@ -765,9 +755,6 @@ def run(
                     # Normalize
                     try:
                         item = adapter.normalize(raw_item, terms=all_terms)
-                        if item.id in seen_item_ids:
-                            continue
-                        seen_item_ids.add(item.id)
                         # Update provenance
                         item.provenance.run_id = run_id
                         item.provenance.query_string = query_display

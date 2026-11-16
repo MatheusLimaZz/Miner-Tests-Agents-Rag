@@ -23,6 +23,8 @@ env/
 # Data (never commit collected data)
 data/*
 !data/.gitkeep
+# Execuções arquivadas fora de data/ (substituídas)
+data_arquivo/
 
 # DuckDB
 *.duckdb

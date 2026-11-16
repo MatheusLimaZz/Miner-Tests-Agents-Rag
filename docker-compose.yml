@@ -13,6 +13,7 @@ services:
       - ./data:/app/data
       - ./protocols:/app/protocols
       - ./src:/app/src
+      - ./scripts:/app/scripts
     env_file:
       - path: .env
         required: false

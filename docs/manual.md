@@ -127,9 +127,16 @@ flowchart TD
 - Catálogo versionado de ferramentas e métodos: aliases (menção N1), imports Python, pacotes, arquivos de configuração e comandos de CLI (sinais N2/N3), família, sistema-alvo, degrau típico na escada de oráculos e origem (`seed` ou `discovery`).
 - Expande os modelos de consulta `{anchor}` e `{repo}` do protocolo; nomes ambíguos só contam com contexto do léxico ou sinal estrutural.
 
-#### 8. Enriquecimento e extração (`enrich.py`, `extract.py`) — ADR-023
-- `enrich` lê, pela API oficial e sob o Governor, árvore, workflows de CI, manifestos de dependência, contribuidores e meses com commits de cada repositório.
+#### 8. Enriquecimento e extração (`enrich.py`, `extract.py`) — ADR-023, ADR-056
+- `enrich` lê, pela API oficial e sob o Governor, árvore, workflows de CI, manifestos de dependência, contribuidores e meses com commits de cada repositório. Os workflows que a busca de código apontou são lidos primeiro (até 20), antes dos dez primeiros da árvore. Com `--reuse-days`, só reaproveita o sinal de outra execução que leu esses arquivos e que ainda traz o conteúdo deles.
 - `extract` aplica o gazetteer e atribui o nível de evidência: N1 menção em texto; N2 import, configuração ou dependência; N3 invocação em CI com commits em ≥2 meses e ≥2 contribuidores.
+- **O que conta como invocação em CI:** um passo `run:` ou `uses:` do workflow que usa uma ação do repositório da ferramenta (`uses`), chama o comando dela (`cli`), roda ou importa o módulo (`module`) ou instala o pacote (`install`). O nome da ferramenta solto num comando (`name`) vale no máximo N2. Comentários, `name:`, `env:`, `with:`, o que só imprime (`echo`) e o que a execução exclui (`-p no:x`, `-m "not x"`) não contam. A forma fica na coluna `via` da detecção.
+- **Onde os sinais do repositório entram:** só no item do repositório ou, sem ele, num hit de código. Repositório conhecido apenas por issues fica com as menções (N1). Repositório que tem o nome da ferramenta (o próprio, uma cópia ou um homônimo) não conta como uso dela.
+- `extract` grava `extract_stats.json` com o que cada regra deixou de fora; o relatório da mineração mostra.
+
+#### 8.1 Pesos de amostragem (`weights.py`) — ADR-058
+- Consulta que para no limite de itens é amostra. O manifesto guarda, por consulta, os itens mantidos, os descartados por filtro local e o total que a fonte informa; a fração é examinados ÷ disponíveis e o peso de cada item, o inverso. Consulta truncada sem total fica com fração desconhecida e peso 1, registrado como tal.
+- O relatório da mineração traz a seção **Amostragem** com as frações por fonte, tipo, consulta e ano; `analysis/artigo2.py` usa os pesos nas leituras ponderadas.
 
 #### 9. Revisão manual (`screening.py`, `coding.py`, `agreement.py`) — ADR-024, 027–029
 - Planilhas CSV (`;`, UTF-8 com BOM) validadas por inteiro antes de gravar; uma decisão por (item, codificador).
@@ -141,8 +148,10 @@ flowchart TD
 #### 11. Análises e descoberta (`analysis.py`, `discovery.py`) — ADR-035–039
 - Unidades de análise (repositório ou item) a partir das detecções ou da codificação por consenso; frequência, coocorrência, cobertura de modos de falha, escada de oráculos e H2, comparação RAG × agentes e saturação; LDA e k-means no passe de descoberta aberta (extra opcional `analysis`).
 
-#### 12. PRISMA e pacote (`prisma.py`, `package.py`) — ADR-030, 040
+#### 12. PRISMA e pacote (`prisma.py`, `package.py`) — ADR-030, 040, 058, 060
 - Fluxo PRISMA derivado só dos registros da execução; pacote Zenodo com redação por política de redistribuição e checksums.
+- O PRISMA separa o que o teto da própria fonte cortou do que o limite de itens da execução deixou de examinar (estimativa, limite superior: consultas se sobrepõem).
+- O pacote registra o hash do protocolo igual ao do manifesto (os arquivos de `protocol/` vão com fim de linha LF), o commit e se havia alterações sem commit, na coleta e no empacotamento. Pacote feito com alterações pendentes sai marcado: faça o commit e rode `msrkit package --run <id>` de novo.
 
 #### 13. CLI (`src/msrkit/cli/`) — ADR-033
 - Pacote por etapa: `collect`, `evidence`, `review`, `validation`, `corpus`, `analyze`, `menu`; `app` e `DATA_DIR` expostos em `msrkit.cli`.
@@ -387,10 +396,10 @@ msrkit precision score data/validation/<run>/precision_sample.csv
 `msrkit report` gera o **relatório da mineração** (`relatorio_mineracao.md` e `.json`) em `reports/<run>/`, legível sem abrir o manifesto:
 
 - **Resumo** da execução em um parágrafo;
-- **Espaço temporal:** janela buscada, início, fim e duração da execução, datas dos itens por ano;
-- **Locais:** consultas executadas/planejadas, requisições, itens retornados, descartados, únicos e truncamentos por fonte; fontes não consultadas e o motivo; itens por fonte e tipo;
+- **Espaço temporal:** janela buscada, início, fim e duração da execução, datas dos itens por ano; se `MSRKIT_WINDOW_*` estendeu a janela (como na coleta diária de RSS), também a janela do protocolo e quantos itens ficam fora dela;
+- **Locais:** consultas executadas/planejadas, requisições, itens retornados, descartados, únicos e truncamentos por fonte; fontes não consultadas e o motivo (fora desta execução, fonte paga, indisponível, desativada no protocolo); itens por fonte e tipo;
 - **Termos buscados:** léxico por idioma, consultas literais por fonte, opções da execução, termos que mais casaram e os que não casaram nenhuma vez;
-- **Quantidades:** funil (identificados → filtro local → duplicatas → únicos), conceitos do protocolo e, se houver, enriquecimento e detecções N1/N2/N3;
+- **Quantidades:** funil (identificados → filtro local → duplicatas → únicos), conceitos do protocolo e, se houver, enriquecimento e detecções N1/N2/N3; com execuções anteriores em `data/` (a coleta diária de RSS as restaura do cache), quantos itens são novos e o total acumulado;
 - **Avisos:** consultas planejadas que não rodaram, falhas, tetos de API, amostra cortada pelo limite de itens, itens fora da janela, deduplicação pendente.
 
 ```bash

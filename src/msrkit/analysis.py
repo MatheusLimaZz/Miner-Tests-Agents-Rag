@@ -96,8 +96,6 @@ def is_anchored_query(
 
     if f"import {t_id_lower}" in q_lower or f"from {t_id_lower} import" in q_lower:
         return True
-    if tool_entry is not None and getattr(tool_entry, "repos", None):
-        return any(f"repo:{r.lower()}" in q_lower for r in tool_entry.repos)
     return bool("repo:" in q_lower and t_id_lower in q_lower)
 
 
@@ -115,20 +113,11 @@ def units_from_detections(
     items: list[Item],
     detections: list[Detection],
     gazetteer: Gazetteer | None = None,
-    *,
-    item_type: str = "all",
-    exclude_self: bool = False,
 ) -> list[Unit]:
-    if item_type != "all":
-        items = [it for it in items if getattr(it.kind, "value", str(it.kind)) == item_type]
-
     units: dict[str, Unit] = {}
     item_unit: dict[str, str] = {}
     item_map = {it.id: it for it in items}
     tools_by_id = {t.id: t for t in gazetteer.tools} if gazetteer else {}
-    self_tools_by_repo = (
-        gazetteer.self_tools_by_repo() if (exclude_self and gazetteer is not None) else {}
-    )
 
     for it in items:
         key = _unit_key(it)
@@ -142,8 +131,6 @@ def units_from_detections(
             continue
         unit = units[unit_id]
         if d.entry_type == "tool":
-            if exclude_self and d.entry_id in self_tools_by_repo.get(unit_id.lower(), set()):
-                continue
             current = unit.tools.get(d.entry_id)
             if current is None or LEVEL_RANK[d.level] > LEVEL_RANK[current]:
                 unit.tools[d.entry_id] = d.level
@@ -196,8 +183,6 @@ def units_from_codings(
     items: list[Item],
     codings: dict[tuple[str, str], CodingRecord],
     gazetteer: Gazetteer | None = None,
-    *,
-    exclude_self: bool = False,
 ) -> list[Unit]:
     """One unit per coded item, merged per repository (union of coded values)."""
     by_item: dict[str, list[CodingRecord]] = {}
@@ -205,9 +190,6 @@ def units_from_codings(
         by_item.setdefault(item_id, []).append(rec)
     item_map = {it.id: it for it in items}
     tools_by_id = {t.id: t for t in gazetteer.tools} if gazetteer else {}
-    self_tools_by_repo = (
-        gazetteer.self_tools_by_repo() if (exclude_self and gazetteer is not None) else {}
-    )
     units: dict[str, Unit] = {}
 
     def _as_list(v: Any) -> list[Any]:
@@ -227,8 +209,6 @@ def units_from_codings(
         level = values.get(FIELD_LEVEL)
         q_str = item.provenance.query_string
         for tool in _as_list(values.get(FIELD_TOOLS)):
-            if exclude_self and tool in self_tools_by_repo.get(key.lower(), set()):
-                continue
             current = unit.tools.get(tool)
             if level and (current is None or LEVEL_RANK[level] > LEVEL_RANK[current]):
                 unit.tools[tool] = level

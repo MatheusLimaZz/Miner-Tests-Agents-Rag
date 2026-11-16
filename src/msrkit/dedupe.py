@@ -147,7 +147,7 @@ class DedupeReport(BaseModel):
 
     unique: list[Any]
     duplicates: list[Any]
-    # duplicate item id -> "id" | "url" | "content" | "near:<similarity>:<kept item id>"
+    # duplicate item id -> "url" | "content" | "near:<similarity>:<kept item id>"
     reasons: dict[str, str] = {}
     duplicate_reasons: list[str] = []
 
@@ -237,20 +237,13 @@ def deduplicate(
 
 
 def _exact_passes(items: list[Item]) -> tuple[list[Item], list[tuple[Item, str]]]:
-    """Passes 0, 1 and 2: canonical ID, canonical URL and content hash."""
-    seen_ids: set[str] = set()
+    """Passes 1 and 2: canonical URL and content hash."""
     seen_urls: set[str] = set()
     seen_hashes: set[str] = set()
     unique: list[Item] = []
     duplicates: list[tuple[Item, str]] = []
 
     for item in items:
-        # Pass 0: ID uniqueness
-        if item.id in seen_ids:
-            duplicates.append((item, "id"))
-            logger.debug("Duplicate ID: %s", item.id)
-            continue
-
         # Pass 1: URL canonicalization
         canon_url = canonicalize_url(str(item.url))
         if canon_url in seen_urls:
@@ -271,7 +264,6 @@ def _exact_passes(items: list[Item]) -> tuple[list[Item], list[tuple[Item, str]]
                 continue
             seen_hashes.add(c_hash)
 
-        seen_ids.add(item.id)
         unique.append(item)
 
     return unique, duplicates

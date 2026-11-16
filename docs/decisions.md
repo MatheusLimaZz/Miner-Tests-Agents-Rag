@@ -493,3 +493,185 @@ This document records architectural, design, and technical decisions made during
   - Warnings list planned − executed queries per source, failed or incomplete queries, `source_cap` truncation, sources without historical coverage, the sample cut by the item limit, unique items dated outside the window, a missing dedupe, a missing manifest and an unfinished run.
   - The Coleta workflow runs `msrkit report` after `msrkit prisma` and before `msrkit package`, so the report ships in the reproducibility package. The job summary shows the report of the latest run only; scheduled RSS runs restore earlier runs from the cache. If the pipeline stops early, the summary step still generates the report for whatever was collected.
 - **Consequences:** Every collection, including the daily RSS one, leaves a readable record of what was mined. The report adds no new data: rerunning `msrkit report` on the same files gives the same output.
+- **Revision after the first scheduled RSS run (run 2026-10-31T13-43-17Z-64b5):**
+  - Sources with no executed query were listed with their availability ("OK: token configured"), which read as if they had been consulted. The reason now comes from `effective_protocol.enabled_sources` and `source_groups`: outside this run, paid, unavailable, disabled in the protocol, or enabled with no query run. Only the last one is a warning.
+  - When `MSRKIT_WINDOW_*` replaces the window, the report reads the protocol file without overrides and states its window and how many unique items fall outside it. All 43 items of that run were published in September–October 2026, after the protocol's 2026-08-31 cutoff: the daily RSS stream cannot enter the E2 corpus without a recorded deviation.
+  - With earlier runs in data/ (the scheduled job restores them from the cache), the report counts the unique items no earlier run had and the accumulated total. The run alone only shows within-run duplicates, which hides the day-to-day overlap of RSS feeds.
+  - The PRISMA flow now also reports planned queries that were not executed, per source.
+  - `protocol_sha256` normalizes CRLF to LF before hashing. The same protocol gave `e48faa103868` on a Windows checkout and `d755f05d757b` on the CI runner. Manifests hashed on Windows before this change carry the CRLF hash.
+
+---
+
+## ADR-048: The Official Collection Runs Locally
+
+- **Context:** The Coleta workflow job has a 240-minute timeout. A collection at the official scale does not fit. Run d28a (100 items per query, every repository enriched) took about two hours of collection in Docker, plus the enrichment of 5,500 repositories.
+- **Decision:**
+  - `scripts/coleta_local.py` runs the workflow's steps locally or in the container, with no time limit and in the same order: validate, run, dedupe, enrich, extract, screening sheet, PRISMA, mining report, CSV, package, preliminary A1–A6 analyses and the precision sample. Every step after the collection is pinned to the run id it created.
+  - The script sets the workflow's source groups. It blanks `MSRKIT_WINDOW_*` and `MSRKIT_TERMS*` in the child environment, so the window and lexicon come from the protocol file alone, as on the Actions runner, whatever the local `.env` holds. An empty variable is ignored by the overrides and blocks the `.env` value, since existing variables win.
+  - GitHub requires `GITHUB_TOKEN` before anything starts. Without it the source runs at 60 requests/hour and without code search, which would take many hours.
+  - Defaults: 100 items per query and every repository enriched through GraphQL (which falls back to REST when it fails).
+  - Output goes to `data/` and a full log to `data/logs/`. A fatal step stops the run and prints `--retomar <run_id>`, which resumes the collection (`msrkit run --resume`) and reruns the later steps. Those steps are idempotent, and enrichment resumes from what is saved. Optional steps (analyses, precision sample, stats) do not stop the run.
+  - On Windows the script keeps the system awake while it runs (`SetThreadExecutionState`).
+- **Consequences:** The workflow stays for test samples and the daily RSS accumulation. Official runs are local, and the manifest records where and how they ran (`env_overrides`, `run_options`). `scripts/` is mounted in docker-compose so the container sees the script.
+- **Revision after run 2026-11-02T19-14-30Z-d855:** The script no longer collects RSS. The feeds carry only the ~10 latest posts each, so every local run got 0 items inside the protocol window (2023-01-01 to 2026-08-31). RSS stays in the daily Actions accumulation, as monitoring outside the E2 corpus, and `--fontes` can still add it. The mining report lists it as outside the run.
+
+---
+
+## ADR-049: GitHub Issue Searches Collect Issues Only
+
+- **Context:** GitHub's `/search/issues` now rejects, with 422, a query that does not say `is:issue` or `is:pull-request`. In run 2026-11-01T23-59-22Z-7837, all 72 term × language issue requests got that 422, and the adapter logged a warning and recorded each query as completed with 0 items, so neither the report nor the PRISMA flow showed the loss: 1,440 issues, against 3,795 `kind: issue` items in run d28a. Run d28a, on 2026-10-20, sent the same queries without the qualifier and received issues and pull requests mixed (2,405 issues, 1,390 PRs).
+- **Decision:**
+  - Issue searches collect issues only, following the protocol's `kind: issue` literally. The adapter appends `is:issue` to every issue query, term or literal, that does not already set `is:`/`type:` issue or PR. The anchor queries (`repo:{repo} is:issue label:bug`) already did.
+  - A 422 no longer looks like an empty result. The adapter keeps going through the query's other languages and then raises `QueryRejectedError` with GitHub's message, so the query is recorded as not completed, the mining report lists it under failed queries, and `--resume` redoes it.
+  - The GitHub adapter version goes to 0.2.0, so manifests show which runs used the new queries.
+- **Consequences:** Pull requests leave the corpus. Runs with adapter 0.2.0 are not directly comparable with d28a on `kind: issue`: d28a's PRs (37% of its issue items) have no counterpart. A comparison should drop URLs containing `/pull/` from d28a first. Run 2026-11-01T23-59-22Z-7837 is superseded for GitHub issues and should be rerun.
+
+---
+
+## ADR-050: English-Only Lexicon
+
+- **Context:** ADR-018 added a Portuguese lexicon (16 terms) as an exploratory stratum for criterion I4. It stayed small: 90 items in run d28a and 63 of 11,316 unique items in run 2026-11-02T19-14-30Z-d855, and 4 of its terms never matched. English is the working language of the field, and the team decided to search in English only.
+- **Decision:** The protocol drops `terms_by_language.pt`, `pt` from `languages`, the `pt.stackoverflow` site, and the Portuguese concept terms ("geração aumentada por recuperação", "agente", "teste", "avaliação"). Criterion I4 becomes "English". The `terms_by_language` mechanism and the Portuguese inflection rules in `keywords.py` stay in the code for other studies.
+- **Consequences:** The E2 corpus describes the community that publishes in English. Runs before this change are not comparable on the language stratum. The Paper 2 macro `ResItensPt` now counts 0.
+
+---
+
+## ADR-051: Literal Repository Queries Without OR Groups
+
+- **Context:** The protocol's two literal repository queries were meant to find repositories about testing RAG and agentic systems: `RAG (eval OR test OR testing) in:name,description,readme stars:>5` and the same with `agentic`. On 2026-11-03, live counts showed that GitHub's repository search ignores the parenthesized OR group: each query returned exactly what `RAG` or `agentic` alone returns (27,662 and 175,235 repositories). The 100 repositories each one collected in run d855 were a sample of every RAG or agentic repository, not of the ones about testing. The code query `"tool_call" "assert" language:Python path:tests` had a similar problem: code search splits `tool_call` into two words, and the query matched 291,840 test files.
+- **Decision:**
+  - Each repository query becomes four, one word each, searched in name and description only: `eval`, `evaluation`, `test`, `testing`. The README match is dropped because it pulls in any repository that mentions both words anywhere (`RAG testing` in READMEs returns 14,863 repositories, `ollama/ollama` among the first).
+  - The eight queries return 99 to 266 repositories for RAG and 394 to 1,489 for agentic (`stars:>5`, window 2023-01-01..2026-08-31). The RAG ones fit almost entirely in 100 items per query per year, once the queries run by year (PLANO, step O8); the agentic ones remain samples.
+  - The tool-call query becomes two queries for names that only appear in tests of tool calls: `"expected_tool_calls"` (1,076 files) and `"assert_tool_call"` (463).
+- **Consequences:** This is a recorded deviation from the queries of protocol §7.3. Repository items from runs before this change are not comparable on these labels. The repository term queries (`"RAG evaluation"`, `"agent testing"` and the rest, with `language:` and `stars:>=3`) are unchanged.
+
+---
+
+## ADR-052: dev.to Collected Whole (Census Sources)
+
+- **Context:** The dev.to API has no text search, so the adapter reads tags page by page and keeps articles that match the lexicon, about 1% of them. In run d855 the source ran as a single query with the run's cap of 100 items and `max_pages: 10` per tag. Ten pages of 1,000 articles reach back only to about September 2026, so most of what was read fell after the window, and 93 of the 98 articles kept were from 2026. The `ai` tag adds 60,000 articles in September–October 2026 alone, so its ten pages never reached the window.
+- **Decision:**
+  - A source can be marked `census: true` in the protocol. The run's per-query cap (`--per-query-limit`) and the fair-share caps then do not apply to it; `--limit` and the protocol's per-source limits still do. The manifest records the census sources in `effective_protocol.census_sources`, and the mining report lists them next to the run options.
+  - dev.to is a census source, with `max_pages: 40` over the tags `rag`, `llm`, `agents`, `llmops` and `testing`, which covers every page of each (November 2026). `ai` is dropped.
+  - Expected cost: about 100 list requests and one body request per kept article, roughly 1,000 requests at 30/min, or about 30 minutes.
+- **Consequences:** dev.to's share of the corpus reflects every matching article of five tags over the whole window, with no sampling. The local-filter discards grow accordingly (tens of thousands of `no_term_match` records), which the PRISMA flow counts as removed before screening. Articles tagged only `ai` are out of the corpus.
+
+---
+
+## ADR-053: Reproducibility of GitHub Code Search
+
+- **Context:** Only 61% of run d855's GitHub code hits were also in run d28a, collected 13 days earlier, while Hacker News, Hugging Face and Stack Exchange matched 99–100%. Code search has no date qualifier, so its results cannot be pinned to the window. The adapter sent `sort=indexed&order=desc`, which the REST docs mark as closing down.
+- **Measured on 2026-11-03:**
+  - Re-running three code queries 24 h after d855 (`"from ragas import"`, `"import deepeval"`, `filename:promptfooconfig.yaml`) returned 100, 100 and 98 of the same 100 files. The search is stable from one day to the next and drifts over weeks as GitHub re-indexes repositories. Part of the d28a gap also comes from query changes between the runs, such as renamed gazetteer repositories.
+  - `sort=indexed` and the default best-match order returned the same 100 files for the same three queries.
+- **Decision:**
+  - Code searches drop `sort`/`order` and use the default order (GitHub adapter 0.2.1). Repository and issue searches keep `sort=updated`.
+  - With earlier runs in `data/`, the mining report adds a per-source table of the unique items an earlier run also had, so each collection measures how much each source repeats.
+  - The study corpus is the frozen package of the official run (PLANO, O9), not a re-query. Paper 1 reports the drift as a reliability threat, with these numbers.
+- **Consequences:** Two runs a few days apart give nearly the same code hits; runs weeks apart do not, and the per-source table shows by how much.
+
+---
+
+## ADR-054: Enrichment Reused Across Runs
+
+- **Context:** Enrichment reads each repository's tree, workflows, manifests, contributors and commit months, and is bound by GitHub's 5,000 core requests per hour. In run d855 it took 6 h 38 min of the 7 h 23 min run, although 3,977 of its 5,260 repositories (76%) had been enriched by run 7837 the day before. Signals were reused only within a run, to resume it.
+- **Decision:**
+  - `msrkit enrich --reuse-days N` copies a repository's signals from another run in `data/enrich/` when that run was enriched with the same window and the same gazetteer config files, the signals have no error, and they were fetched at most N days ago. The newest copy wins. Off by default (`N = 0`).
+  - A copied signal keeps its `fetched_at` and request hashes and gains `reused_from`, the run whose requests produced it. The mining report counts the reused repositories.
+  - Each enrichment writes `data/enrich/<run>/meta.json` with its window and config files. For runs enriched before that file existed, the window comes from the manifest and the config files from the gazetteer of the protocol path the manifest names, which is the file as it is now.
+  - `scripts/coleta_local.py` passes `--reuse-days 14`; `--reaproveitar-dias 0` turns it off.
+- **Consequences:** A new run within two weeks of the last one enriches only the repositories it did not have; checked on d855, 5,257 of its 5,260 repositories are eligible for the next run. N3 signals depend on the window (commit months, which is closed and fixed) and on the repository's current state (workflows, contributors); 14 days bounds how stale that state can be, and `reused_from` keeps it traceable. Signals produced by an older version of the enrichment code are copied as they are; a change to that code should be released with `--reuse-days 0` for one run.
+
+---
+
+## ADR-055: Queries Stratified by Year
+
+- **Context:** Each query keeps at most 100 items (`--per-query-limit`), and the sources return the newest first: GitHub sorts by `updated`, Stack Exchange by `creation`. In run d855, 2,339 of 3,579 GitHub issues (65%) and 93 of 98 dev.to articles were from 2026, and 84 queries stopped at the cap, often far below what the source held (issues for "LLM evaluation": 100 of 13,304). For Paper 2, which ranks tools and engagement, that sample leans toward what was popular in 2026.
+- **Decision:**
+  - With `sampling: {strata: year}` in the protocol, `msrkit run` and `msrkit plan` split every query whose source applies its dates into one query per calendar year of the window (2023, 2024, 2025 and 2026 up to August). Each stratum gets the run's per-query cap. Within a stratum, the source's own order still applies.
+  - Split: GitHub repository and issue searches (`created:`), Hacker News and Stack Exchange. Not split: GitHub code search (no date qualifier), literal queries that set their own `created:`, Hugging Face (no date filter), and census sources (ADR-052), which have no cap to balance.
+  - Before collecting a stratum, the run asks the source how many items the stratum matches and stores it as the query's `estimated_total` in the manifest: GitHub sums `total_count` over the query's languages, Stack Exchange sums `total` over its sites, Hacker News reads `nbHits`. Collected ÷ available gives each stratum's sampling fraction, so analyses can weight frequencies back to the population.
+- **Consequences:** Every year of the window is represented, and the manifest holds what is needed to correct for unequal fractions. Weights matter for population-level frequencies; unweighted counts over-represent the older years. The counts cost one extra request per stratum and language or site: about 600 more GitHub search requests (~20 min at 30/min) and 400 more Stack Exchange requests (with a key, out of 10,000 per day). The corpus grows: GitHub queries go from 182 to 213 and from 182 to 384 partitions, with up to 100 items each, so a run at the same per-query cap collects more than d855.
+- **Correction (2026-11-05):** The per-source cap was not revised with this decision. In run fb68, GitHub reached `max_items_per_source: 10000` after 320 of 384 partitions, so the free-term issue queries for 2024–2026 never ran and 83% of the issues came from the 24 anchor repositories. The cap is now 20,000; the full plan needs at most about 16,500 items at the 100-item per-query cap.
+
+---
+
+## ADR-056: Structural Evidence Is Read from the Artifact
+
+- **Context:** The review of run 2026-11-06T01-19-19Z-015e found three ways in which N2 and N3 counted what was not there. All numbers below are from that run.
+  1. *Issues carried the repository's signals.* Signals read by `msrkit enrich` were attached to the repository item or, without one, to "the first item of the repository", which could be an issue. 533 structural detections (521 dependencies, 6 CI, 6 config files) sat on 319 issues, so an issue with a question counted as a use of every package in the repository's `pyproject.toml`. The Article 2 engagement analysis groups items by their detections, so those issues entered the engagement of tools they never mention.
+  2. *A search hit in a workflow file counted as a CI invocation.* The CI queries (`{anchor} path:.github/workflows`) match the raw text of the file. Of the 1,986 CI detections that came from such hits, the workflow named the tool in a `run:` or `uses:` step in 555 (28%). In 1,036 it did not: 616 had no whole-word match at all (code search matches inside words: `pyrit` in `pyrite-dev`, `webarena` in `WebArenaTask_0`), 353 named the tool only in comments, `name:` or other keys, and 67 only in `with:` inputs. For 395 the file had not been read (the enrichment read the first ten workflows of the tree). The repository-level scan had the same flaw: it searched every line, so `- name: Run promptfoo eval` matched.
+  3. *The project's own metadata counted as a dependency.* The manifest parser took any quoted word and any `key =` of `pyproject.toml`, `setup.py` and `Cargo.toml`. `name = "lm_eval"` made every copy of lm-evaluation-harness a repository that depends on it; `keywords`, the names of extras groups (`evals = [...]`) and tool tables (`[tool.mypy] files`) did the same. 54 of the 665 external N3 repository–tool pairs (8.1%) were copies of the tool's own repository (19 of 39 for lm-evaluation-harness, 7 of 7 for OpenAI Evals).
+- **Decision:**
+  - **Repository signals go to artifact items only.** `Extractor.run` attaches them to the repository item or, without one, to a code hit. A repository the run knows only through issues keeps its text mentions (N1) and gets no N2/N3; the count is reported (`repos_without_artifact_item`).
+  - **A CI invocation is read from the workflow file.** The file is parsed as YAML and only what a runner executes is searched: the `run:` script and the `uses:` reference of each step, and the `uses:` of a job that calls a reusable workflow. Comment lines of a script are dropped, and so are commands that only print (`echo`, `print`, a bare string) and what a test run excludes (`-p no:langsmith`, `-m "not ragas"`, `--ignore=`). A file that is not valid YAML yields nothing. The search hit alone yields nothing either: `import` and `config` hits still trust the query, as before (ADR-023).
+  - **Forms of invocation,** strongest first, recorded in the detection (`via`): `uses` (an action of the tool's own repository, or one its organization names after it), `cli` (a gazetteer command where a command goes, so `flake8 lm_eval.py` is not one), `module` (`python -m <module>` or an inline import), `install` (a package manager installs the tool's package or repository; `uv sync --extra evals` and `pip install -e ".[evals]"` install no package called `evals`), and `name` (the anchor token elsewhere in a command: a path, an argument).
+  - **The bare name supports N2, never N3.** It shows that the workflow refers to the tool, not that it runs it. It is not accepted at all for tools marked `ambiguous`, and it is reserved for anchor tools. N3 therefore needs one of the four strong forms plus the thresholds of ADR-023.
+  - **The enrichment reads the workflows the search hit.** `msrkit enrich` reads those files first, up to 20 per repository, before the first ten of the tree. A signal copied from another run (ADR-054) is used only if it read, or already tried to read, every such file, and only if it still carries file contents: the reproducibility package keeps paths only, and a signal copied from it would yield no detection. A repository enriched before a hit was known is redone, also inside the same run.
+  - **Dependencies come from the tables that declare them.** `pyproject.toml` and `Cargo.toml` are parsed as TOML and only tables whose key ends in `dependencies` or `dependency-groups` are read (PEP 621 and 735, Poetry, uv, PDM, Hatch, pixi); a group's name is not a package. `setup.py` gives the lists of `install_requires` and `extras_require`; `setup.cfg` is read as INI. A file that does not parse falls back to quoted requirement specs outside metadata keys.
+  - **A repository that carries the tool's name is not a user of it.** When the repository's own name, or the project name its manifests declare, is the tool's id, package or repository name, no structural detection of that tool is emitted: it is the tool, a copy or a namesake (`self_copies`).
+  - `extract` writes `extract_stats.json` with what each rule left out; the mining report and the package carry it.
+- **Effect on run 015e (re-extracted, same items and signals):** detections 13,923 → 11,234; structural detections on issues 533 → 0; CI detections 2,186 → 473 (uses 25, cli 76, module 41, install 143, name 188), of which 135 at N3; workflow hits of the CI queries: 404 verified, 1,187 rejected, 395 unverified (their files are read in the next collection); 130 repository–tool pairs set aside as the tool itself; units with an external N3 testing tool: 102, or 181 if the bare name counted.
+- **Limits:** N3 measures explicit invocation. A library used only inside the test suite (`pytest` running tests that import Ragas) leaves no trace in the workflow and stays at N2, so N3 favors tools with a command line or an action; benchmarks without a package (WebArena, AgentBench) can reach N3 only through `uses`. The bare-name form keeps noise (URLs, file paths), which is why it stops at N2; Article 2 reports the looser rule as a sensitivity analysis. Precision of each level is to be measured on the stratified sample (ADR-031, step O10).
+
+---
+
+## ADR-057: Issue Filters, Concept Lexicon, Gazetteer Names and Language Shares
+
+- **Context:** Findings of the same review, on what the collection brings in.
+  - 812 of the 7,339 unique issues of run 015e (11.1%) were opened by automation: `github-actions[bot]` 582 (daily lists of arXiv papers), `fire-bot` 131, Mend, Renovate. The adapter already had `filter_bots`, off by default.
+  - The concept `teste` listed the bare word "oracle". 260 items matched it and 31 matched "test oracle"; the others were about Oracle the company (OpenRAE/rae#315, an issue about an Oracle Cloud deploy key, was labelled `teste`).
+  - Short tool names collide with other words and other software: `pyrit` (a WPA cracker, and `pyrite`), `ranx` (another library of that name), `beir`, `mteb`, `opik`. 14 third-party repositories of the run are called `agentbench`, and other projects have their own `agentevals` module. The PyPI package `bfcl` is not the Berkeley Function Calling Leaderboard, whose package is `bfcl-eval` (module `bfcl_eval`, command `bfcl`; checked on pypi.org on 2026-11-14). `Azure/PyRIT` moved to `microsoft/PyRIT`: the anchor query for the old name returned nothing.
+  - Reading the adapter showed two sampling defects. A query fills its item cap in the order of the protocol's languages, so a capped query took every item from Python repositories and none from TypeScript ones. And the page size shrank as items came in (`per_page = limit − yielded`), which shifts page boundaries: with a filter dropping items, the next page returned results already seen.
+- **Decision:**
+  - `filter_bots: true` in the protocol. An issue is dropped when the API declares its author a bot (`user.type == "Bot"`) or the login ends in `[bot]` or `-bot` (plus the dependency tools). A login that merely ends in "bot" is not enough. The filter applies to issues, not to repositories. Each discard is recorded with the reason `bot_author`, so the PRISMA flow counts it, and the query goes on until the cap is filled with issues from people.
+  - `exclude_labels: [dependencies, requirement]`: the default label of Dependabot and Renovate, and the label of issues used as requirement records. Reason `excluded_label`. **`question` is not in the list:** 105 issues of run 015e carry it (27 in Ragas, 16 in LlamaIndex), such as "How to evaluate Agent?", and a user's question is the discourse the study looks for; excluding it would also contradict having Stack Exchange as a source.
+  - "oracle" becomes "test oracle" in the concept `teste`.
+  - Gazetteer 0.2: `ambiguous: true` for opik, pyrit, ranx, beir, mteb, agentbench and agentevals; BFCL gains its package, module and commands; PyRIT's repository is `microsoft/PyRIT`.
+  - **One page size per query**, and a result is marked as seen before the filters, so a discard is counted once.
+  - **The cap is shared among languages in proportion to their result counts** (largest remainder, at least one item for a language that has results, smallest first, and a share not used passes on). The counts are the ones `population()` reads before the search. One sampling fraction then holds for the whole query, which is what its weight assumes (ADR-058).
+  - With `sampling.strata: year`, the run now asks the source for the size of every query it can count, code search included (`BaseAdapter.countable`), not only of the queries it stratifies by year.
+  - GitHub adapter 0.3.0. `max_requests_per_source` goes from 2,500 to 4,000: a query dominated by automation pages up to ten times to fill its cap.
+- **Consequences:** The collection differs from run 015e in what it samples: issues from automation leave, TypeScript repositories enter the capped queries, and code queries gain totals. Runs before this change are not comparable on issue counts. Bulletins published by ordinary accounts (about 90 in run 015e) pass the author filter; Article 2 sets them aside by title (ADR-059).
+- **Open point for the authors:** repositories of a tool's own organization count as external adoption (the validators under `guardrails-ai/*` use an action of `guardrails-ai/guardrails`). Treating an organization as the vendor is right for `guardrails-ai` or `promptfoo` and wrong for `microsoft` or `NVIDIA`, so it needs a per-tool decision in the gazetteer and was left as it is.
+
+---
+
+## ADR-058: Sampling Fractions, Design Weights and Sampled Queries in the PRISMA Flow
+
+- **Context:** With a cap of 100 items, a query takes a large share of a small result set and a small share of a large one. In run 015e the issue queries by term examined 45.2% of what GitHub held for 2023, 26.9% for 2024, 8.3% for 2025 and 2.1% for 2026. ADR-055 stored the totals so that analyses could weight, and no analysis did. The PRISMA flow reported 0 records not retrieved, because it counted only queries cut by a source's own cap, while 122 queries had stopped at the run's cap.
+- **Decision:**
+  - `msrkit.weights` derives the sample design from the manifest. Each executed query is a stratum (source, kind, term or literal query, year). Its fraction is examined ÷ available, where examined is the items kept plus the items a local filter dropped (with the bot filter, 100 kept out of 1,000 examined stand for a tenth of the people's issues) and available is the source's count. A query that was not cut short has fraction 1, whatever the estimate said. A truncated query without a count has an unknown fraction: its items weigh 1 and are reported as such, never guessed.
+  - An item weighs the inverse of the fraction of the query that kept it (`provenance.partition`).
+  - A unit counts once per tool at its best level (ADR-035), so `pair_weights` gives each unit–entry pair the weight of the most probable route to the evidence: the lightest item carrying the mention for N1, the lightest artifact item of the repository for N2/N3.
+  - The mining report gains a section with the fractions by source, kind, query family and year, the largest weight and Kish's effective sample size; a group with one stratum of unknown size has an unknown fraction.
+  - The PRISMA flow gains "not examined (item limit)": for the queries cut by the run's cap, the results they match beyond what was examined, with the number of such queries and how many have no total.
+- **What the weights do not do:** they undo the unequal allocation among strata, not the order in which a source returns results inside one (GitHub: most recently updated first; code search: best match). A record that several queries match is counted in the total of each, so weighted totals and the PRISMA figure are upper bounds; shares and rankings depend on it less. Weights of multi-item units lean high, since a unit with several routes is more likely to be observed than by any single one.
+- **Run 015e:** 122 queries stopped at the cap, 41 of them without a total (code search and Hugging Face); the others left about 120,513 results unexamined; the largest weight is 251 and the effective sample size 1,446 of 19,592 items kept.
+
+---
+
+## ADR-059: Article 2 — Mean of E for P2, Two Readings of P1 and P2, Automated Issues (revises ADR-046)
+
+- **Context:** ADR-046 summarized a tool's engagement by the median of E, the percentile of the item's metric inside its source × kind. For GitHub issues the metric is reactions, and most issues have none: they tie at the floor of the stratum (E = 0.43 in run 015e, 0.47 in a later one). In run 015e, 18 of 20 tools had that floor as their median; in the next run all 21 had it, Spearman's ρ of P2 was undefined, and yet Kruskal–Wallis (H = 53.8, p < 0.001) showed that the tools differ. The difference lies above the median.
+- **Decision (taken before the official collection, on statistical grounds, not on which value it gives):**
+  - **P2 uses the mean of E per tool.** E is a mid-rank percentile: the share of the other items of the stratum that the item beats, ties counting half. Its mean over a stratum is 0.5 for any distribution, so the mean over a tool's items is the chance that one of them beats another item of its stratum: a stratified probability of superiority. It is the statistic that Kruskal–Wallis and Dunn already compare (mean ranks), it uses the whole distribution, and it is bounded, so no item can dominate it. The alternatives were set aside: the 75th percentile is also on the floor when more than 75% of the items tie there, and the share of items with a reaction has a different baseline in each source, which breaks the rule that engagement is compared only after normalization.
+  - The median stays in the tables, with the share of items at the floor, and ρ with the median is reported as the statistic first registered (`ResRhoMediana`). Sensitivity: ρ with the share of a tool's items in the top 10% of their stratum (`--top-share`), which has the same baseline everywhere; without listicles; non-truncated queries only; the negative binomial model, now compared with the mean. ρ gains a bootstrap 95% interval over the items, with N3 held fixed.
+  - **Two readings.** P1 and P2 are computed on the sample and on design-weighted statistics (ADR-058): weighted unit counts for Kendall's τ, the weighted percentile and weighted mean of E with weighted N3 for ρ. A proposition is read as supported only when both readings agree (`ResPUmConclusao`, `ResPDoisConclusao`); otherwise the result is "inconclusive (depends on the weighting)". When the package's manifest has no totals, only the sample reading exists.
+  - **N3 rule.** The main analysis uses the N3 of ADR-056. τ with the bare name counted as adoption is reported as a sensitivity analysis (`ResTauUmTresNome`).
+  - **Automated issues leave every analysis,** not only engagement: dependency upkeep and alerts, as before, plus periodic bulletins that ordinary accounts publish (a date in the title with a word of the genre, such as "papers", "digest", "daily", or a title that is only a date). On run 015e the rule matches 493 of the 812 issues by automated authors and 46 by ordinary accounts.
+  - The thresholds (τ < 0.5, |ρ| < 0.4) and the other parameters of ADR-046 are unchanged.
+- **Run 015e, re-extracted (calibration only, not the official corpus):** τ(N1, N3) = 0.34 [0.17; 0.44] on the sample, 0.38 weighted and 0.40 with the bare name as N3: P1 supported in the three. ρ(mean E, N3) = −0.36 [−0.57; 0.10] over 17 tools, −0.37 weighted: under the 0.4 threshold, with an interval that crosses it. ρ with the median is −0.08 and with the top share 0.01.
+- **Consequences:** The paper's text and the header of `tab_qp3` must say "mean", not "median". `tab_qp1_pond.tex` is new. The macro names are unchanged; new ones were added.
+
+---
+
+## ADR-060: One Protocol Hash, and the Commit of the Code That Collected
+
+- **Context:** The package of run 015e showed protocol hash `b330350c…` and its report `b87c6f3a…` for the same file: the package hashed the bytes of the Windows checkout (CRLF) and the manifest hashes the LF form (ADR-047). The package also recorded the commit at packaging time, `e30414f`, while a later commit had changed the protocol before the collection ended.
+- **Decision:**
+  - The package records `protocol_sha256` as the manifest does, and stores the files of `protocol/` with LF line endings, so the SHA-256 of the packaged protocol is that hash. `protocol_matches_run` is false when the protocol file changed after the collection.
+  - `msrkit run` writes the code's state to the manifest (`code`: `git_commit`, `git_dirty`). The package records the state at packaging time and the one of the collection (`collected_with`), and its README says in words whether the commit reproduces the run.
+  - The state is read from the checkout the package runs from, not from the current directory: a run started from another folder, or from a data folder that is a repository of its own, still records the commit of the code. An installed copy that git does not track (a virtual environment inside the project folder) records no commit.
+  - `scripts/coleta_local.py` shows the commit before it starts and warns when there are uncommitted changes.
+- **Consequences:** A package built from a working tree with uncommitted changes says so; the remedy is to commit and run `msrkit package --run <id>` again.

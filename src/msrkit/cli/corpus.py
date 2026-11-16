@@ -151,7 +151,9 @@ def report(
 
     Writes data/reports/<run_id>/relatorio_mineracao.md and .json. Run it after the
     collection; counts from dedupe, enrich and extract are included when present.
+    Earlier runs in data/ (the daily RSS accumulation, for one) give the new items.
     """
+    from msrkit.config import load_protocol
     from msrkit.provenance import load_manifest
     from msrkit.report import build_report
     from msrkit.report import render_markdown as render_report
@@ -161,7 +163,19 @@ def report(
     manifest = None
     with contextlib.suppress(FileNotFoundError):
         manifest = load_manifest(_cli.DATA_DIR, run_id)
+    # The protocol file's own window, without MSRKIT_WINDOW_* (the manifest keeps the
+    # window in force only).
+    protocol_window = None
+    if manifest and Path(manifest.protocol_path).exists():
+        with contextlib.suppress(Exception):
+            w = load_protocol(manifest.protocol_path, environ={}).window
+            protocol_window = (w.since, w.until)
+    earlier = [r for r in storage.list_runs() if r < run_id]
+    earlier_urls = {
+        str(it.url) for r in earlier for it in storage.read_items(r, prefer_deduped=True)
+    }
     dedupe_path = _cli.DATA_DIR / "items" / run_id / "dedupe_report.json"
+    stats_path = _cli.DATA_DIR / "extract" / run_id / "extract_stats.json"
     rep = build_report(
         run_id,
         manifest,
@@ -171,6 +185,10 @@ def report(
         _cli.DATA_DIR / "runs" / run_id / "discarded.jsonl",
         signals=_load_repo_signals(run_id),
         detections=_load_detections(run_id),
+        protocol_window=protocol_window,
+        earlier_urls=earlier_urls,
+        earlier_runs=len(earlier),
+        extract_stats=json.loads(stats_path.read_text("utf-8")) if stats_path.exists() else None,
     )
     out_dir = _cli.DATA_DIR / "reports" / run_id
     out_dir.mkdir(parents=True, exist_ok=True)

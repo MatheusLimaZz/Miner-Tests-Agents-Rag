@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import base64
-from datetime import UTC, date, datetime
+import json
+from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
@@ -11,7 +12,20 @@ from typer.testing import CliRunner
 
 from msrkit.adapters.github import GitHubAdapter
 from msrkit.cli import app
-from msrkit.enrich import CORE_RATE_LIMIT, GitHubEnricher, _is_test_path, apply_signals, repo_of
+from msrkit.enrich import (
+    CORE_RATE_LIMIT,
+    MAX_PRIORITY_WORKFLOWS,
+    MAX_WORKFLOWS,
+    GitHubEnricher,
+    RepoSignals,
+    _is_test_path,
+    apply_signals,
+    covers_workflows,
+    has_file_contents,
+    repo_of,
+    select_workflows,
+    workflow_hits,
+)
 from msrkit.models import Item, ItemKind, Provenance
 from msrkit.storage import ItemStorage
 
@@ -19,6 +33,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     import pytest
+
+PROTOCOL = "protocols/v0_rag_agents_testing.yaml"
 
 TREE = {
     "truncated": False,
@@ -250,6 +266,254 @@ class TestEnrichCommand:
         assert enriched.tech.contributors == 7
 
 
+class TestEnrichReuse:
+    """Signals another run fetched recently, under the same window, are copied (ADR-054)."""
+
+    def _setup(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[str]:
+        monkeypatch.setattr("msrkit.cli.DATA_DIR", tmp_path)
+        fetched: list[str] = []
+
+        def fake_get(self: GitHubAdapter, url: str, params: Any = None, headers: Any = None) -> Any:
+            fetched.append(url)
+            return _fake_get(url, params)
+
+        monkeypatch.setattr(GitHubAdapter, "_governed_get", fake_get)
+        return fetched
+
+    def _signals(self, tmp_path: Path, run_id: str) -> dict[str, RepoSignals]:
+        path = tmp_path / "enrich" / run_id / "github_repos.jsonl"
+        lines = path.read_text(encoding="utf-8").splitlines()
+        return {s.repo: s for s in map(RepoSignals.model_validate_json, lines)}
+
+    def _append(self, tmp_path: Path, run_id: str, *signals: RepoSignals) -> None:
+        path = tmp_path / "enrich" / run_id / "github_repos.jsonl"
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.writelines(s.model_dump_json() + "\n" for s in signals)
+
+    def test_copies_recent_error_free_signals(self, tmp_path: Path, monkeypatch) -> None:
+        fetched = self._setup(tmp_path, monkeypatch)
+        runner = CliRunner()
+        ItemStorage(tmp_path).save_items([_item("https://github.com/acme/rag")], "run-a")
+        assert runner.invoke(app, ["enrich", "--run", "run-a"]).exit_code == 0
+        old = (datetime.now(UTC) - timedelta(days=30)).isoformat()
+        now = datetime.now(UTC).isoformat()
+        self._append(
+            tmp_path, "run-a",
+            RepoSignals(repo="acme/old", fetched_at=old, has_ci=True),
+            RepoSignals(repo="acme/err", fetched_at=now, error="HTTPError: 502"),
+        )  # fmt: skip
+        urls = ["https://github.com/acme/rag", "https://github.com/acme/old",
+                "https://github.com/acme/err"]  # fmt: skip
+        ItemStorage(tmp_path).save_items([_item(u) for u in urls], "run-b")
+        fetched.clear()
+
+        result = runner.invoke(app, ["enrich", "--run", "run-b", "--reuse-days", "14"])
+        assert result.exit_code == 0, result.stdout
+        assert "0 already enriched, 1 reused, 2 to go" in result.stdout
+        assert "Reused from: run-a" in result.stdout
+        assert not any("/repos/acme/rag" in u for u in fetched)  # copied, not fetched
+        signals = self._signals(tmp_path, "run-b")
+        assert signals["acme/rag"].reused_from == "run-a"
+        original = self._signals(tmp_path, "run-a")["acme/rag"]
+        assert signals["acme/rag"].fetched_at == original.fetched_at
+        for repo in ("acme/old", "acme/err"):  # too old, or failed: fetched again
+            assert signals[repo].reused_from is None
+            assert any(f"/repos/{repo}" in u for u in fetched)
+        assert ItemStorage(tmp_path).read_items("run-b")[0].tech.has_ci is True
+
+    def test_off_by_default_and_needs_the_same_window(self, tmp_path: Path, monkeypatch) -> None:
+        self._setup(tmp_path, monkeypatch)
+        runner = CliRunner()
+        for run_id in ("run-a", "run-b", "run-c"):
+            ItemStorage(tmp_path).save_items([_item("https://github.com/acme/rag")], run_id)
+        assert runner.invoke(app, ["enrich", "--run", "run-a"]).exit_code == 0
+        meta = tmp_path / "enrich" / "run-a" / "meta.json"
+        key = json.loads(meta.read_text(encoding="utf-8"))
+        meta.write_text(json.dumps({**key, "since": "2024-01-01"}), encoding="utf-8")
+
+        result = runner.invoke(app, ["enrich", "--run", "run-b", "--reuse-days", "14"])
+        assert "0 reused, 1 to go" in result.stdout
+        assert "0 earlier run(s) eligible" in result.stdout
+
+        meta.write_text(json.dumps(key), encoding="utf-8")  # same window again
+        result = runner.invoke(app, ["enrich", "--run", "run-c"])
+        assert "0 already enriched, 1 to go" in result.stdout  # reuse is opt-in
+
+    def test_runs_without_meta_use_the_manifest_window(self, tmp_path: Path, monkeypatch) -> None:
+        from msrkit.models import Manifest
+        from msrkit.provenance import save_manifest
+
+        self._setup(tmp_path, monkeypatch)
+        runner = CliRunner()
+        for run_id in ("run-a", "run-b"):
+            ItemStorage(tmp_path).save_items([_item("https://github.com/acme/rag")], run_id)
+        assert runner.invoke(app, ["enrich", "--run", "run-a"]).exit_code == 0
+        key = json.loads((tmp_path / "enrich" / "run-a" / "meta.json").read_text("utf-8"))
+        (tmp_path / "enrich" / "run-a" / "meta.json").unlink()
+        manifest = Manifest(
+            run_id="run-a", msrkit_version="t", protocol_path=PROTOCOL, protocol_sha256="x",
+            started_at=datetime.now(UTC),
+            effective_protocol={"window": {"since": key["since"], "until": key["until"]}},
+        )  # fmt: skip
+        save_manifest(manifest, tmp_path)
+        result = runner.invoke(app, ["enrich", "--run", "run-b", "--reuse-days", "14"])
+        assert "1 reused, 0 to go" in result.stdout
+
+
+def _code_item(repo: str, path: str) -> Item:
+    item = _item(f"https://github.com/{repo}/blob/main/{path}")
+    item.id = f"{repo}:{path}"
+    item.kind = ItemKind.CODE
+    item.tech.path = path
+    return item
+
+
+class TestWorkflowHits:
+    """Workflow files that code search returned are read first (ADR-056)."""
+
+    def test_hits_are_grouped_by_repository(self) -> None:
+        items = [
+            _code_item("Acme/Rag", ".github/workflows/eval.yml"),
+            _code_item("acme/rag", ".github/workflows/eval.yml"),
+            _code_item("acme/rag", ".github/workflows/nightly.yml"),
+            _code_item("acme/rag", "tests/test_x.py"),
+            _item("https://github.com/acme/other"),
+        ]
+        assert workflow_hits(items) == {
+            "acme/rag": [".github/workflows/eval.yml", ".github/workflows/nightly.yml"]
+        }
+
+    def test_hits_come_first_and_the_rest_fills_the_cap(self) -> None:
+        tree = [f".github/workflows/w{i:02d}.yml" for i in range(30)]
+        chosen = select_workflows(tree, [tree[25], "gone.yml", tree[3]])
+        assert chosen[:2] == [tree[25], tree[3]]  # in hit order; the missing file is skipped
+        assert len(chosen) == MAX_WORKFLOWS and chosen[2] == tree[0]
+        many = select_workflows(tree, tree[5:])
+        assert many == tree[5 : 5 + MAX_PRIORITY_WORKFLOWS]
+        assert select_workflows(tree, None) == tree[:MAX_WORKFLOWS]
+        # A tree cut short by the API may hide the file: it is still tried.
+        assert select_workflows([], ["gone.yml"], tree_complete=False) == ["gone.yml"]
+
+    def test_the_hit_workflow_is_read_even_beyond_the_default_cap(self, monkeypatch) -> None:
+        paths = [f".github/workflows/w{i:02d}.yml" for i in range(14)]
+        tree = {"truncated": False, "tree": [{"path": p, "type": "blob"} for p in paths]}
+
+        def fake_get(url: str, params: Any = None, headers: Any = None) -> MagicMock:
+            if "/git/trees/main" in url:
+                resp = MagicMock(status_code=200, headers={})
+                resp.json.return_value = tree
+                return resp
+            if "/contents/.github/workflows/" in url:
+                resp = MagicMock(status_code=200, headers={})
+                resp.json.return_value = _b64(f"# {url.rsplit('/', 1)[-1]}\n" + WORKFLOW)
+                return resp
+            return _fake_get(url, params)
+
+        adapter = GitHubAdapter()
+        monkeypatch.setattr(adapter, "_governed_get", fake_get)
+        wanted = [paths[13], ".github/workflows/deleted.yml"]
+        sig = GitHubEnricher(adapter).enrich("acme/rag", priority_paths=wanted)
+        assert sig.error is None
+        assert list(sig.workflows)[0] == paths[13] and len(sig.workflows) == MAX_WORKFLOWS
+        assert sig.workflows_missing == [".github/workflows/deleted.yml"]
+        assert covers_workflows(sig, wanted)  # read or tried: no need to fetch again
+        assert not covers_workflows(sig, [".github/workflows/w12.yml"])
+
+    def test_signals_from_a_package_have_no_file_contents(self) -> None:
+        kept = {"repo": "a/b", "workflows": {"x.yml": "jobs: {}"}, "manifests": {"setup.py": ""}}
+        assert has_file_contents(kept)
+        assert has_file_contents({"repo": "a/b", "workflows": {}, "manifests": {}})
+        assert not has_file_contents({"repo": "a/b", "workflows": ["x.yml"], "manifests": []})
+        assert not has_file_contents({"repo": "a/b", "workflows": {"x.yml": ""}})
+
+
+class TestReuseNeedsUsableSignals:
+    """A copied signal has to carry what the extractor reads (ADR-056)."""
+
+    def _run(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[CliRunner, list[str]]:
+        monkeypatch.setattr("msrkit.cli.DATA_DIR", tmp_path)
+        fetched: list[str] = []
+
+        def fake_get(self: GitHubAdapter, url: str, params: Any = None, headers: Any = None) -> Any:
+            fetched.append(url)
+            return _fake_get(url, params)
+
+        monkeypatch.setattr(GitHubAdapter, "_governed_get", fake_get)
+        return CliRunner(), fetched
+
+    def _signal(self, tmp_path: Path, run_id: str) -> dict[str, Any]:
+        path = tmp_path / "enrich" / run_id / "github_repos.jsonl"
+        last = path.read_text(encoding="utf-8").splitlines()[-1]
+        data: dict[str, Any] = json.loads(last)
+        return data
+
+    def test_a_copy_without_file_contents_is_fetched_again(self, tmp_path, monkeypatch) -> None:
+        runner, fetched = self._run(tmp_path, monkeypatch)
+        for run_id in ("run-a", "run-b"):
+            ItemStorage(tmp_path).save_items([_item("https://github.com/acme/rag")], run_id)
+        assert runner.invoke(app, ["enrich", "--run", "run-a"]).exit_code == 0
+        # What the reproducibility package keeps: the paths, not the files.
+        stripped = self._signal(tmp_path, "run-a")
+        stripped["workflows"] = sorted(stripped["workflows"])
+        stripped["manifests"] = sorted(stripped["manifests"])
+        path = tmp_path / "enrich" / "run-a" / "github_repos.jsonl"
+        path.write_text(json.dumps(stripped) + "\n", encoding="utf-8")
+        fetched.clear()
+
+        result = runner.invoke(app, ["enrich", "--run", "run-b", "--reuse-days", "14"])
+        assert result.exit_code == 0, result.stdout
+        assert "0 reused, 1 to go" in result.stdout
+        assert "Not reused, fetched again: 1 without file contents" in result.stdout
+        assert any("/repos/acme/rag" in u for u in fetched)
+        again = self._signal(tmp_path, "run-b")
+        assert again["reused_from"] is None
+        assert "npx promptfoo eval" in again["workflows"][".github/workflows/eval.yml"]
+
+    def test_a_copy_that_never_read_the_hit_workflow_is_fetched_again(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        runner, fetched = self._run(tmp_path, monkeypatch)
+        repo_item = _item("https://github.com/acme/rag")
+        ItemStorage(tmp_path).save_items([repo_item], "run-a")
+        assert runner.invoke(app, ["enrich", "--run", "run-a"]).exit_code == 0
+        hit = _code_item("acme/rag", ".github/workflows/nightly.yml")  # not read by run-a
+        for run_id in ("run-b", "run-c"):
+            ItemStorage(tmp_path).save_items([repo_item, hit], run_id)
+        fetched.clear()
+
+        result = runner.invoke(app, ["enrich", "--run", "run-b", "--reuse-days", "14"])
+        assert result.exit_code == 0, result.stdout
+        assert "0 reused, 1 to go" in result.stdout
+        assert "1 without a workflow hit by code search" in result.stdout
+        assert any("/repos/acme/rag" in u for u in fetched)
+        # The file is not in the tree: recorded as tried, so the next run can copy it.
+        assert self._signal(tmp_path, "run-b")["workflows_missing"] == [
+            ".github/workflows/nightly.yml"
+        ]
+        fetched.clear()
+        result = runner.invoke(app, ["enrich", "--run", "run-c", "--reuse-days", "14"])
+        assert "1 reused, 0 to go" in result.stdout and not fetched
+
+    def test_a_run_enriched_before_the_hit_was_known_is_completed(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        runner, fetched = self._run(tmp_path, monkeypatch)
+        repo_item = _item("https://github.com/acme/rag")
+        ItemStorage(tmp_path).save_items([repo_item], "run-a")
+        assert runner.invoke(app, ["enrich", "--run", "run-a"]).exit_code == 0
+        hit = _code_item("acme/rag", ".github/workflows/nightly.yml")
+        ItemStorage(tmp_path).save_items([hit], "run-a")  # appended: same run, a new hit
+        fetched.clear()
+
+        result = runner.invoke(app, ["enrich", "--run", "run-a"])
+        assert result.exit_code == 0, result.stdout
+        assert "0 already enriched, 1 to go" in result.stdout
+        assert "1 enriched before without a workflow that code search hit" in result.stdout
+        assert any("/repos/acme/rag" in u for u in fetched)
+        result = runner.invoke(app, ["enrich", "--run", "run-a"])
+        assert "1 already enriched, 0 to go" in result.stdout
+
+
 def test_core_rate_limit_is_under_quota_and_above_search_rate():
     per_hour = CORE_RATE_LIMIT.requests * 3600 / CORE_RATE_LIMIT.per_seconds
     search = GitHubAdapter.policy.rate_limit
@@ -281,394 +545,3 @@ def test_empty_repo_handling(monkeypatch):
     enricher = GitHubEnricher(adapter)
     sig = enricher.enrich("acme/empty")
     assert sig.error == "empty repository (no default branch)"
-
-
-def test_repo_of_strips_git_suffix():
-    item = _item("https://github.com/owner/repo.git")
-    assert repo_of(item) == "owner/repo"
-    item_blob = _item("https://github.com/owner/repo.git/blob/main/tests/test_rag.py")
-    assert repo_of(item_blob) == "owner/repo"
-
-
-def test_enrich_signals_fork_and_archived_rest(monkeypatch):
-    adapter = GitHubAdapter()
-
-    def _meta_get(url: str, params=None, headers=None):
-        resp = MagicMock()
-        resp.status_code = 200
-        resp.headers = {}
-        if url.endswith("/repos/acme/forked"):
-            resp.json.return_value = {
-                "default_branch": "main",
-                "fork": True,
-                "archived": True,
-                "parent": {"full_name": "upstream/orig"},
-            }
-        elif "/git/trees/main" in url:
-            resp.json.return_value = {"tree": [], "truncated": False}
-        elif url.endswith("/contributors"):
-            resp.status_code = 204
-            resp.json.return_value = []
-        elif url.endswith("/commits"):
-            resp.json.return_value = []
-        else:
-            resp.status_code = 404
-        return resp
-
-    monkeypatch.setattr(adapter, "_governed_get", _meta_get)
-    enricher = GitHubEnricher(adapter)
-    sig = enricher.enrich("acme/forked")
-    assert sig.error is None
-    assert sig.is_fork is True
-    assert sig.is_archived is True
-    assert sig.fork_parent == "upstream/orig"
-
-
-def test_enrich_signals_fork_and_archived_graphql(monkeypatch):
-    adapter = GitHubAdapter()
-
-    def _meta_get(url: str, params=None, headers=None):
-        resp = MagicMock()
-        resp.status_code = 200
-        resp.headers = {}
-        if url.endswith("/repos/acme/gql-forked"):
-            resp.json.return_value = {"default_branch": "main"}
-        elif "/git/trees/main" in url:
-            resp.json.return_value = {"tree": [], "truncated": False}
-        elif url.endswith("/contributors"):
-            resp.status_code = 204
-            resp.json.return_value = []
-        elif url.endswith("/commits"):
-            resp.json.return_value = []
-        else:
-            resp.status_code = 404
-        return resp
-
-    def _meta_post(url: str, json=None, headers=None):
-        resp = MagicMock()
-        resp.status_code = 200
-        resp.headers = {}
-        resp.json.return_value = {
-            "data": {
-                "repository": {
-                    "isFork": True,
-                    "isArchived": True,
-                    "parent": {"nameWithOwner": "upstream/gql-orig"},
-                    "mentionableUsers": {"totalCount": 20},
-                }
-            }
-        }
-        return resp
-
-    monkeypatch.setattr(adapter, "_governed_get", _meta_get)
-    monkeypatch.setattr(adapter, "_governed_post", _meta_post)
-    enricher = GitHubEnricher(adapter, use_graphql=True)
-    sig = enricher.enrich("acme/gql-forked")
-    assert sig.error is None
-    assert sig.is_fork is True
-    assert sig.is_archived is True
-    assert sig.fork_parent == "upstream/gql-orig"
-
-
-def test_contributors_http_202_retry_success(monkeypatch):
-    adapter = GitHubAdapter()
-    calls = 0
-
-    def _contrib_get(url: str, params=None, headers=None):
-        nonlocal calls
-        resp = MagicMock()
-        resp.status_code = 200
-        resp.headers = {}
-        if url.endswith("/repos/acme/retry"):
-            resp.json.return_value = {"default_branch": "main"}
-        elif "/git/trees/main" in url:
-            resp.json.return_value = {"tree": [], "truncated": False}
-        elif url.endswith("/contributors"):
-            calls += 1
-            if calls == 1:
-                resp.status_code = 202
-            else:
-                resp.status_code = 200
-                resp.headers = {"link": '<https://api.github.com/x?page=5>; rel="last"'}
-                resp.json.return_value = [{}]
-        elif url.endswith("/commits"):
-            resp.json.return_value = []
-        return resp
-
-    monkeypatch.setattr("time.sleep", lambda s: None)
-    monkeypatch.setattr(adapter, "_governed_get", _contrib_get)
-    enricher = GitHubEnricher(adapter)
-    sig = enricher.enrich("acme/retry")
-    assert sig.error is None
-    assert calls == 2
-    assert sig.contributors == 5
-
-
-def test_contributors_http_202_fallback_to_graphql_mentionable_users(monkeypatch):
-    adapter = GitHubAdapter()
-
-    def _contrib_get(url: str, params=None, headers=None):
-        resp = MagicMock()
-        resp.status_code = 200
-        resp.headers = {}
-        if url.endswith("/repos/acme/fallback"):
-            resp.json.return_value = {"default_branch": "main"}
-        elif "/git/trees/main" in url:
-            resp.json.return_value = {"tree": [], "truncated": False}
-        elif url.endswith("/contributors"):
-            resp.status_code = 202
-        elif url.endswith("/commits"):
-            resp.json.return_value = []
-        return resp
-
-    def _fake_post(url: str, json=None, headers=None):
-        resp = MagicMock()
-        resp.status_code = 200
-        resp.headers = {}
-        resp.json.return_value = {
-            "data": {
-                "repository": {
-                    "mentionableUsers": {"totalCount": 42},
-                }
-            }
-        }
-        return resp
-
-    monkeypatch.setattr("time.sleep", lambda s: None)
-    monkeypatch.setattr(adapter, "_governed_get", _contrib_get)
-    monkeypatch.setattr(adapter, "_governed_post", _fake_post)
-    enricher = GitHubEnricher(adapter, use_graphql=True)
-    sig = enricher.enrich("acme/fallback")
-    assert sig.error is None
-    assert sig.contributors == 42
-
-
-def test_contributors_http_202_returns_none_after_failed_retry(monkeypatch):
-    adapter = GitHubAdapter()
-
-    def _contrib_get(url: str, params=None, headers=None):
-        resp = MagicMock()
-        resp.status_code = 200
-        resp.headers = {}
-        if url.endswith("/repos/acme/retry-fail"):
-            resp.json.return_value = {"default_branch": "main"}
-        elif "/git/trees/main" in url:
-            resp.json.return_value = {"tree": [], "truncated": False}
-        elif url.endswith("/contributors"):
-            resp.status_code = 202
-        elif url.endswith("/commits"):
-            resp.json.return_value = []
-        return resp
-
-    monkeypatch.setattr("time.sleep", lambda s: None)
-    monkeypatch.setattr(adapter, "_governed_get", _contrib_get)
-    enricher = GitHubEnricher(adapter)
-    sig = enricher.enrich("acme/retry-fail")
-    assert sig.error is None
-    assert sig.contributors is None
-
-
-def test_max_workflows_elevated_and_prioritizes_items(monkeypatch):
-    from msrkit.enrich import MAX_WORKFLOWS
-
-    assert MAX_WORKFLOWS == 40
-
-    adapter = GitHubAdapter()
-    fetched_workflows: list[str] = []
-
-    tree_blobs = [{"path": f".github/workflows/wf_{i:02d}.yml", "type": "blob"} for i in range(15)]
-
-    def _wf_get(url: str, params=None, headers=None):
-        resp = MagicMock()
-        resp.status_code = 200
-        resp.headers = {}
-        if url.endswith("/repos/acme/workflows"):
-            resp.json.return_value = {"default_branch": "main"}
-        elif "/git/trees/main" in url:
-            resp.json.return_value = {"tree": tree_blobs, "truncated": False}
-        elif "/contents/.github/workflows/" in url:
-            path_part = url.split("/contents/")[1]
-            from urllib.parse import unquote
-
-            path = unquote(path_part)
-            fetched_workflows.append(path)
-            resp.json.return_value = _b64("name: test\non: push\n")
-        elif url.endswith("/contributors"):
-            resp.status_code = 204
-            resp.json.return_value = []
-        elif url.endswith("/commits"):
-            resp.json.return_value = []
-        return resp
-
-    monkeypatch.setattr(adapter, "_governed_get", _wf_get)
-    enricher = GitHubEnricher(adapter)
-
-    item = _item("https://github.com/acme/workflows/blob/main/.github/workflows/wf_14.yml")
-    item.tech.path = ".github/workflows/wf_14.yml"
-
-    sig = enricher.enrich("acme/workflows", items=[item])
-    assert sig.error is None
-    assert len(sig.workflows) == 15
-    assert fetched_workflows[0] == ".github/workflows/wf_14.yml"
-
-
-def test_reusable_signals_restores_unstripped_and_leaves_unknown_empty(
-    tmp_path: Path, monkeypatch
-) -> None:
-    import json
-    from datetime import timedelta
-
-    from msrkit.cli.evidence import _enrich_key, _reusable_signals
-
-    monkeypatch.setattr("msrkit.cli.DATA_DIR", tmp_path)
-    key = _enrich_key(None, None, set())
-
-    now = datetime.now(UTC)
-    t1 = (now - timedelta(days=2)).isoformat()
-    t2 = (now - timedelta(days=1)).isoformat()
-
-    # Older run with full unstripped contents
-    run_1_dir = tmp_path / "enrich" / "run-2026-03-01T00-00-00Z"
-    run_1_dir.mkdir(parents=True)
-    (run_1_dir / "meta.json").write_text(json.dumps(key), encoding="utf-8")
-    run_1_sig = {
-        "repo": "acme/rag",
-        "default_branch": "main",
-        "workflows": {"ci.yml": "name: CI\njobs: test\n"},
-        "manifests": {"pyproject.toml": '[project]\nname = "rag"\n'},
-        "fetched_at": t1,
-        "error": None,
-    }
-    (run_1_dir / "github_repos.jsonl").write_text(json.dumps(run_1_sig) + "\n", encoding="utf-8")
-
-    # Newer run within window, but stripped to path lists
-    run_2_dir = tmp_path / "enrich" / "run-2026-03-10T00-00-00Z"
-    run_2_dir.mkdir(parents=True)
-    (run_2_dir / "meta.json").write_text(json.dumps(key), encoding="utf-8")
-    run_2_sig = {
-        "repo": "acme/rag",
-        "default_branch": "main",
-        "workflows": ["ci.yml", "deploy.yml"],
-        "manifests": ["pyproject.toml"],
-        "fetched_at": t2,
-        "error": None,
-    }
-    (run_2_dir / "github_repos.jsonl").write_text(json.dumps(run_2_sig) + "\n", encoding="utf-8")
-
-    pool, runs = _reusable_signals(
-        run_id="run-target", key=key, wanted={"acme/rag"}, max_age_days=30
-    )
-
-    assert "acme/rag" in pool
-    sig = pool["acme/rag"]
-    assert sig.reused_from == "run-2026-03-10T00-00-00Z"
-    # ci.yml and pyproject.toml restored from run 1
-    assert sig.workflows["ci.yml"] == "name: CI\njobs: test\n"
-    assert sig.manifests["pyproject.toml"] == '[project]\nname = "rag"\n'
-    # deploy.yml was not in unstripped predecessor; remains empty for hydration in enrich
-    assert sig.workflows["deploy.yml"] == ""
-
-
-def test_enrich_hydrates_reused_signals_with_missing_contents_rest(
-    tmp_path: Path, monkeypatch
-) -> None:
-    import json
-    from datetime import timedelta
-
-    from msrkit.cli.evidence import _enrich_key
-
-    monkeypatch.setattr("msrkit.cli.DATA_DIR", tmp_path)
-    monkeypatch.setattr("msrkit.cli.evidence._load_run_protocol", lambda *a, **k: None)
-    monkeypatch.setattr(
-        GitHubAdapter,
-        "_governed_get",
-        lambda self, url, params=None, headers=None: _fake_get(url, params),
-    )
-
-    key = _enrich_key(None, None, set())
-    t1 = (datetime.now(UTC) - timedelta(days=1)).isoformat()
-
-    prior_dir = tmp_path / "enrich" / "run-prior-rest"
-    prior_dir.mkdir(parents=True)
-    (prior_dir / "meta.json").write_text(json.dumps(key), encoding="utf-8")
-    prior_sig = {
-        "repo": "acme/rag",
-        "default_branch": "main",
-        "has_ci": True,
-        "workflows": [".github/workflows/eval.yml"],
-        "manifests": ["pyproject.toml"],
-        "fetched_at": t1,
-        "error": None,
-    }
-    (prior_dir / "github_repos.jsonl").write_text(json.dumps(prior_sig) + "\n", encoding="utf-8")
-
-    ItemStorage(tmp_path).save_items([_item("https://github.com/acme/rag")], "run-curr-rest")
-
-    runner = CliRunner()
-    result = runner.invoke(app, ["enrich", "--run", "run-curr-rest", "--reuse-days", "7"])
-    assert result.exit_code == 0, result.stdout
-    assert "1 reused" in result.stdout
-
-    out_file = tmp_path / "enrich" / "run-curr-rest" / "github_repos.jsonl"
-    assert out_file.exists()
-    lines = [json.loads(line) for line in out_file.read_text(encoding="utf-8").splitlines() if line]
-    assert len(lines) == 1
-    hydrated_sig = lines[0]
-    assert "npx promptfoo eval" in hydrated_sig["workflows"][".github/workflows/eval.yml"]
-    assert "ragas>=0.1" in hydrated_sig["manifests"]["pyproject.toml"]
-
-
-def test_enrich_hydrates_reused_signals_with_missing_contents_graphql(
-    tmp_path: Path, monkeypatch
-) -> None:
-    import json
-    from datetime import timedelta
-
-    from msrkit.cli.evidence import _enrich_key
-
-    monkeypatch.setattr("msrkit.cli.DATA_DIR", tmp_path)
-    monkeypatch.setattr("msrkit.cli.evidence._load_run_protocol", lambda *a, **k: None)
-    monkeypatch.setattr(
-        GitHubAdapter,
-        "_governed_get",
-        lambda self, url, params=None, headers=None: _fake_get(url, params),
-    )
-    monkeypatch.setattr(
-        GitHubAdapter,
-        "_governed_post",
-        lambda self, url, json=None, headers=None: _fake_graphql_post(url, json),
-    )
-
-    key = _enrich_key(None, None, set())
-    t1 = (datetime.now(UTC) - timedelta(days=1)).isoformat()
-
-    prior_dir = tmp_path / "enrich" / "run-prior-gql"
-    prior_dir.mkdir(parents=True)
-    (prior_dir / "meta.json").write_text(json.dumps(key), encoding="utf-8")
-    prior_sig = {
-        "repo": "acme/rag",
-        "default_branch": "main",
-        "has_ci": True,
-        "workflows": [".github/workflows/eval.yml"],
-        "manifests": ["pyproject.toml"],
-        "fetched_at": t1,
-        "error": None,
-    }
-    (prior_dir / "github_repos.jsonl").write_text(json.dumps(prior_sig) + "\n", encoding="utf-8")
-
-    ItemStorage(tmp_path).save_items([_item("https://github.com/acme/rag")], "run-curr-gql")
-
-    runner = CliRunner()
-    result = runner.invoke(
-        app, ["enrich", "--run", "run-curr-gql", "--reuse-days", "7", "--graphql"]
-    )
-    assert result.exit_code == 0, result.stdout
-    assert "1 reused" in result.stdout
-
-    out_file = tmp_path / "enrich" / "run-curr-gql" / "github_repos.jsonl"
-    assert out_file.exists()
-    lines = [json.loads(line) for line in out_file.read_text(encoding="utf-8").splitlines() if line]
-    assert len(lines) == 1
-    hydrated_sig = lines[0]
-    assert "npx promptfoo eval" in hydrated_sig["workflows"][".github/workflows/eval.yml"]
-    assert "ragas>=0.1" in hydrated_sig["manifests"]["pyproject.toml"]

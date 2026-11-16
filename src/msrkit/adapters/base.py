@@ -163,6 +163,14 @@ class BaseAdapter(ABC):
         """Whether the source applies `q`'s since/until, so `q` can be split by year."""
         return self.policy.supports_date_filter
 
+    def countable(self, q: Query) -> bool:
+        """Whether population() can count `q` at the source.
+
+        By default, the queries the source filters by date: their count is the size of
+        a year stratum. An adapter that counts any query overrides this.
+        """
+        return self.stratifies_by_date(q)
+
     def population(self, q: Query) -> int | None:
         """How many items `q` matches at the source, for sampling weights; None if unknown."""
         return self.estimate(q)

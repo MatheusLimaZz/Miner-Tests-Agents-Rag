@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import contextlib
 import json
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 import typer
 from rich.table import Table
@@ -59,29 +58,28 @@ def _run_enrich_key(run_id: str) -> dict[str, Any] | None:
 
 
 def _reusable_signals(
-    run_id: str, key: dict[str, Any], wanted: set[str], max_age_days: int
-) -> tuple[dict[str, RepoSignals], list[str]]:
+    run_id: str,
+    key: dict[str, Any],
+    wanted: set[str],
+    max_age_days: int,
+    hits: dict[str, list[str]] | None = None,
+) -> tuple[dict[str, RepoSignals], list[str], dict[str, int]]:
     """Error-free signals of `wanted` repos, at most N days old, from runs with the same key.
 
-    The newest copy of each repository wins; `reused_from` names the run that fetched it.
+    The newest usable copy of each repository wins; `reused_from` names the run that
+    fetched it. A copy is not usable when it lost the files it read (the package keeps
+    paths only) or when it never read a workflow that this run's code search hit
+    (`hits`): the extractor needs those contents, so the repository is fetched again.
+    Returns the signals, the eligible runs and, by reason, the repositories left out.
     """
-    from msrkit.enrich import RepoSignals
-
-    if "reused_from" not in RepoSignals.model_fields:
-        from pydantic.fields import FieldInfo
-
-        RepoSignals.model_fields["reused_from"] = FieldInfo(
-            annotation=cast("Any", str | None), default=None
-        )
-        RepoSignals.model_rebuild(force=True)
+    from msrkit.enrich import RepoSignals, covers_workflows, has_file_contents
 
     cutoff = datetime.now(UTC) - timedelta(days=max_age_days)
     enrich_dir = _cli.DATA_DIR / "enrich"
     pool: dict[str, RepoSignals] = {}
     newest: dict[str, datetime] = {}
     runs: list[str] = []
-    unstripped_wf: dict[tuple[str, str], str] = {}
-    unstripped_mf: dict[tuple[str, str], str] = {}
+    rejected: dict[str, str] = {}
     for run_dir in sorted(enrich_dir.iterdir()) if enrich_dir.is_dir() else []:
         path = run_dir / "github_repos.jsonl"
         if run_dir.name in (run_id, "consolidated") or not path.exists():
@@ -95,31 +93,24 @@ def _reusable_signals(
                 repo = data.get("repo")
                 if repo not in wanted or data.get("error") or not data.get("fetched_at"):
                     continue
-                wf_data = data.get("workflows")
-                if isinstance(wf_data, dict):
-                    for k_path, content in wf_data.items():
-                        if content:
-                            unstripped_wf[(repo, k_path)] = content
-                mf_data = data.get("manifests")
-                if isinstance(mf_data, dict):
-                    for k_path, content in mf_data.items():
-                        if content:
-                            unstripped_mf[(repo, k_path)] = content
                 fetched = datetime.fromisoformat(data["fetched_at"])
                 fetched = fetched if fetched.tzinfo else fetched.replace(tzinfo=UTC)
                 if fetched <= newest.get(repo, cutoff):
                     continue
+                if not has_file_contents(data):
+                    rejected[repo] = "without file contents"
+                    continue
                 sig = RepoSignals.model_validate(data)
+                if not covers_workflows(sig, (hits or {}).get(repo)):
+                    rejected[repo] = "without a workflow hit by code search"
+                    continue
                 sig.reused_from = sig.reused_from or run_dir.name
                 pool[repo], newest[repo] = sig, fetched
-    for repo, sig in pool.items():
-        for k_path, content in list(sig.workflows.items()):
-            if not content and (repo, k_path) in unstripped_wf:
-                sig.workflows[k_path] = unstripped_wf[(repo, k_path)]
-        for k_path, content in list(sig.manifests.items()):
-            if not content and (repo, k_path) in unstripped_mf:
-                sig.manifests[k_path] = unstripped_mf[(repo, k_path)]
-    return pool, runs
+    left_out: dict[str, int] = {}
+    for repo, reason in rejected.items():
+        if repo not in pool:
+            left_out[reason] = left_out.get(reason, 0) + 1
+    return pool, runs, left_out
 
 
 @app.command()
@@ -160,21 +151,14 @@ def enrich(
     from msrkit.adapters.github import GitHubAdapter
     from msrkit.enrich import (
         GitHubEnricher,
-        RepoSignals,
         apply_signals,
+        covers_workflows,
         effective_core_rate_limit,
         enrich_priority,
+        workflow_hits,
     )
     from msrkit.governor import Governor
     from msrkit.storage import ItemStorage
-
-    if "reused_from" not in RepoSignals.model_fields:
-        from pydantic.fields import FieldInfo
-
-        RepoSignals.model_fields["reused_from"] = FieldInfo(
-            annotation=cast("Any", str | None), default=None
-        )
-        RepoSignals.model_rebuild(force=True)
 
     if not run_id:
         run_id = _get_latest_run_id()
@@ -202,24 +186,38 @@ def enrich(
     key = _enrich_key(since, until, config_files)
     (out_path.parent / ENRICH_META).write_text(json.dumps(key), encoding="utf-8")
 
-    todo = [r for r in branches if r not in signals]
+    # Workflow files the run's code search hit: read first, since the extractor checks
+    # them for a CI invocation. A signal that never read one of them is redone.
+    hits = workflow_hits(items)
+    stale = {
+        r
+        for r in branches
+        if r in signals and not signals[r].error and not covers_workflows(signals[r], hits.get(r))
+    }
+    todo = [r for r in branches if r not in signals or r in stale]
     reused: dict[str, RepoSignals] = {}
     if reuse_days:
-        reused, reuse_runs = _reusable_signals(run_id, key, set(todo), reuse_days)
+        reused, reuse_runs, left_out = _reusable_signals(run_id, key, set(todo), reuse_days, hits)
         todo = [r for r in todo if r not in reused]
     if limit is not None:
         todo = todo[:limit]
     reused_note = f"{len(reused)} reused, " if reuse_days else ""
     console.print(
         f"[bold]Run:[/bold] {run_id} · {len(branches)} repositories, "
-        f"{len(signals)} already enriched, {reused_note}{len(todo)} to go"
+        f"{len(signals) - len(stale)} already enriched, {reused_note}{len(todo)} to go"
     )
+    if stale:
+        console.print(
+            f"  {len(stale)} enriched before without a workflow that code search hit: redone"
+        )
     if reuse_days:
         origins = ", ".join(sorted({s.reused_from or "" for s in reused.values()})) or "none"
         console.print(
             f"  Reused from: {origins} (fetched in the last {reuse_days} days, same window "
             f"and config files; {len(reuse_runs)} earlier run(s) eligible)"
         )
+        for reason, count in sorted(left_out.items()):
+            console.print(f"  Not reused, fetched again: {count} {reason}")
 
     adapter = GitHubAdapter(
         governor=Governor(
@@ -237,30 +235,10 @@ def enrich(
     try:
         with open(out_path, "a", encoding="utf-8") as fh:
             for repo, sig in reused.items():
-                missing_wf = [p for p, c in sig.workflows.items() if not c]
-                missing_mf = [p for p, c in sig.manifests.items() if not c]
-                if missing_wf or missing_mf:
-                    branch = sig.default_branch or "HEAD"
-                    hydrated = False
-                    if graphql:
-                        with contextlib.suppress(Exception):
-                            hydrated = enricher._collect_graphql(
-                                sig, branch, missing_wf, missing_mf
-                            )
-                    if not hydrated:
-                        for p in missing_wf:
-                            content = enricher._file(sig, p, branch)
-                            if content is not None:
-                                sig.workflows[p] = content
-                        for p in missing_mf:
-                            content = enricher._file(sig, p, branch)
-                            if content is not None:
-                                sig.manifests[p] = content
                 signals[repo] = sig
                 fh.write(sig.model_dump_json() + "\n")
-                fh.flush()
             for repo in todo:
-                sig = enricher.enrich(repo)
+                sig = enricher.enrich(repo, priority_paths=hits.get(repo))
                 signals[repo] = sig
                 errors += sig.error is not None
                 fh.write(sig.model_dump_json() + "\n")
@@ -377,13 +355,42 @@ def extract(
     ranked = sorted(summary.items(), key=lambda kv: (-kv[1]["N3"], -kv[1]["N2"], -kv[1]["N1"]))
     for entry, row in ranked[:top]:
         table.add_row(entry, str(row["N1"]), str(row["N2"]), str(row["N3"]))
+    # What the extraction left out, kept next to the detections (and in the package).
+    stats = {"detections": len(detections), "items": len(items), "repositories": len(signals)}
+    stats.update(sorted(extractor.stats.items()))
+    (out_dir / "extract_stats.json").write_text(json.dumps(stats, indent=2), encoding="utf-8")
+
     console.print(table)
     console.print(
         f"[green]✓ {len(detections)} detections from {len(items)} items and "
         f"{len(signals)} enriched repositories.[/green] Files: {out_dir}"
     )
-    if extractor.dropped_ambiguous:
-        console.print(
-            f"[dim]{extractor.dropped_ambiguous} mention(s) of ambiguous tool names dropped "
-            "(no lexicon context and no structural signal, §12.2).[/dim]"
+    for line in _extract_notes(extractor.stats):
+        console.print(f"[dim]{line}[/dim]")
+
+
+def _extract_notes(stats: dict[str, int]) -> list[str]:
+    """One line per kind of evidence the extraction refused, with its count."""
+    notes: list[str] = []
+    verified = stats.get("ci_hits_verified", 0)
+    rejected = stats.get("ci_hits_rejected", 0)
+    unverified = stats.get("ci_hits_unverified", 0)
+    if verified or rejected or unverified:
+        notes.append(
+            f"Workflow hits of the CI queries: {verified} name the tool in a run:/uses: step, "
+            f"{rejected} only elsewhere in the file (not counted), {unverified} with no "
+            "content read (not counted; run `msrkit enrich`)."
         )
+    for key, text in (
+        ("repos_without_artifact_item", "repositories known only through issues: no N2/N3"),
+        ("self_copies", "repository-tool pairs where the repository is the tool or a copy of it"),
+        ("workflows_invalid_yaml", "workflow files that are not valid YAML"),
+        (
+            "dropped_ambiguous",
+            "mention(s) of ambiguous tool names dropped (no lexicon context and no "
+            "structural signal, §12.2)",
+        ),
+    ):
+        if stats.get(key):
+            notes.append(f"{stats[key]} {text}.")
+    return notes

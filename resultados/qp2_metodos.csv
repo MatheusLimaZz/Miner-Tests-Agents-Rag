@@ -1,0 +1,11 @@
+method,name,oracle,units,rag,agente
+llm-as-judge,LLM-as-a-judge,pseudo-automatico,692,254,340
+golden-dataset,golden dataset,referencia,465,240,243
+eval-regression,eval regression,referencia,382,157,256
+red-teaming,red teaming,,228,83,154
+assertion-based-testing,assertion-based testing,especificado,199,96,149
+human-evaluation,human evaluation,humano,114,72,70
+trajectory-evaluation,trajectory evaluation,,85,30,58
+synthetic-test-generation,synthetic test generation,,30,20,21
+metamorphic-testing,metamorphic testing,derivado,26,16,19
+property-based-testing,property-based testing,derivado,16,7,11
