@@ -1,6 +1,6 @@
 % Gerado por analysis/artigo2.py — não edite à mão.
 % Pacote: msrkit_2026-11-16T07-29-05Z-ba7b.zip · run_id: 2026-11-16T07-29-05Z-ba7b · base: detecções automáticas
-% Gerado em 2026-11-16 21:24 UTC · parâmetros: min_age_months=3.0, min_n=10, bootstrap=10000, listicle_k=4, tau_threshold=0.5, rho_threshold=0.4, min_together=5, top_share=0.1, with_repos=False, keep_bots=False, seed=20261031
+% Gerado em 2026-11-16 12:55 UTC · parâmetros: min_age_months=3.0, min_n=10, bootstrap=10000, listicle_k=4, tau_threshold=0.5, rho_threshold=0.4, min_together=5, top_share=0.1, with_repos=False, keep_bots=False, seed=20261031
 % parameter --min-age-months
 \newcommand{\ResMinIdade}{3}
 % parameter --min-n
@@ -80,11 +80,11 @@
 % QP1: testing tools in >= 1 unit
 \newcommand{\ResFerramentasDetectadas}{33}
 % QP1: units with >= 1 testing tool (self excluded)
-\newcommand{\ResUnidadesComFerramenta}{1.761}
+\newcommand{\ResUnidadesComFerramenta}{1.817}
 % QP1: units with >= 1 testing tool at external N3
-\newcommand{\ResUnidadesComNTres}{99}
+\newcommand{\ResUnidadesComNTres}{121}
 % QP1: unit-tool pairs set apart as self
-\newcommand{\ResSelfPares}{88}
+\newcommand{\ResSelfPares}{26}
 % QP1: top tool by external N3
 \newcommand{\ResTopNTres}{promptfoo}
 % QP1: units of the top tool at external N3
@@ -98,21 +98,21 @@
 % QP1: units of the top tool at N1
 \newcommand{\ResTopNUmN}{173}
 % QP1.3: Kendall tau-b, N1 x external N3 rankings
-\newcommand{\ResTauUmTres}{0,41}
+\newcommand{\ResTauUmTres}{0,39}
 % QP1.3: bootstrap 95% CI, lower
-\newcommand{\ResTauUmTresLo}{0,25}
+\newcommand{\ResTauUmTresLo}{0,23}
 % QP1.3: bootstrap 95% CI, upper
-\newcommand{\ResTauUmTresHi}{0,50}
+\newcommand{\ResTauUmTresHi}{0,47}
 % QP1.3: p-value
-\newcommand{\ResTauUmTresP}{0,002}
+\newcommand{\ResTauUmTresP}{0,003}
 % QP1.3: Kendall tau-b, N2 x external N3 rankings
 \newcommand{\ResTauDoisTres}{0,49}
 % QP1.3: bootstrap 95% CI, lower
-\newcommand{\ResTauDoisTresLo}{0,32}
+\newcommand{\ResTauDoisTresLo}{0,33}
 % QP1.3: bootstrap 95% CI, upper
-\newcommand{\ResTauDoisTresHi}{0,57}
+\newcommand{\ResTauDoisTresHi}{0,56}
 % QP1.3: Kendall tau-b, N1 x N2 rankings
-\newcommand{\ResTauUmDois}{0,56}
+\newcommand{\ResTauUmDois}{0,55}
 % QP1.3: tools in the rank correlation
 \newcommand{\ResTauFerramentas}{33}
 % P1 verdict against --tau-threshold (sample counts)
@@ -120,29 +120,29 @@
 % QP1.3: Kendall tau-b, N1 x external N3, design-weighted counts
 \newcommand{\ResTauUmTresPond}{0,46}
 % QP1.3 weighted: bootstrap 95% CI, lower
-\newcommand{\ResTauUmTresPondLo}{0,29}
+\newcommand{\ResTauUmTresPondLo}{0,31}
 % QP1.3 weighted: bootstrap 95% CI, upper
-\newcommand{\ResTauUmTresPondHi}{0,57}
+\newcommand{\ResTauUmTresPondHi}{0,56}
 % P1 verdict on the design-weighted counts
 \newcommand{\ResPUmVereditoPond}{sustenta P1}
 % P1: supported only when sample and weighted verdicts agree
 \newcommand{\ResPUmConclusao}{sustenta P1}
 % QP1.3 sensitivity: tau with name-only CI evidence counted as N3
-\newcommand{\ResTauUmTresNome}{0,49}
+\newcommand{\ResTauUmTresNome}{0,45}
 % QP1 sensitivity: units at external N3 under that looser rule
-\newcommand{\ResUnidadesComNTresNome}{176}
+\newcommand{\ResUnidadesComNTresNome}{206}
 % QP1.3: tools most above the diagonal (mention >> adoption)
-\newcommand{\ResMaisFaladas}{TruLens, LangSmith e Ragas}
+\newcommand{\ResMaisFaladas}{TruLens, Ragas e Langfuse}
 % QP1.3: tools most below the diagonal (adoption >> mention)
-\newcommand{\ResMaisAdotadas}{nenhuma}
+\newcommand{\ResMaisAdotadas}{Guardrails AI}
 % context: framework in most units
 \newcommand{\ResFwTop}{LangChain}
 % context: its units
-\newcommand{\ResFwTopN}{894}
+\newcommand{\ResFwTopN}{908}
 % context: second framework
 \newcommand{\ResFwSegundo}{LangGraph}
 % context: its units
-\newcommand{\ResFwSegundoN}{547}
+\newcommand{\ResFwSegundoN}{556}
 % context: % of units with a testing tool that also use a framework
 \newcommand{\ResPctUnidadesComFw}{34}
 % QP5 preview: Jaccard of tool sets, rag x agente units (detections)
@@ -206,13 +206,13 @@
 % P2: bootstrap 95% CI over items (N3 fixed), upper
 \newcommand{\ResRhoHi}{0,21}
 % P2: p-value
-\newcommand{\ResRhoP}{0,715}
+\newcommand{\ResRhoP}{0,724}
 % P2: tools in the correlation
 \newcommand{\ResRhoN}{18}
 % P2 verdict against --rho-threshold (sample statistics)
 \newcommand{\ResPDoisVeredito}{sustenta P2}
 % P2: rho, design-weighted mean E x weighted external N3
-\newcommand{\ResRhoPond}{0,17}
+\newcommand{\ResRhoPond}{0,19}
 % P2 verdict on the design-weighted statistics
 \newcommand{\ResPDoisVereditoPond}{sustenta P2}
 % P2: supported only when sample and weighted verdicts agree
@@ -220,33 +220,33 @@
 % P2 as first registered: rho with the median E (n/d when it is constant)
 \newcommand{\ResRhoMediana}{n/d}
 % P2 sensitivity: rho with the share of items in the top of their stratum
-\newcommand{\ResRhoTopo}{0,15}
+\newcommand{\ResRhoTopo}{0,16}
 % P2 sensitivity: rho without listicles
 \newcommand{\ResRhoSemListicle}{\ensuremath{-}0,16}
 % P2 sensitivity: rho with non-truncated queries only
-\newcommand{\ResRhoNaoTruncadas}{\ensuremath{-}0,26}
+\newcommand{\ResRhoNaoTruncadas}{\ensuremath{-}0,31}
 % P2 sensitivity: eligible items from non-truncated queries
 \newcommand{\ResItensNaoTruncadas}{2.911}
-% robustness: rho between NB tool effects and mean E — ok
-\newcommand{\ResNbRho}{0,67}
+% robustness: rho between NB tool effects and mean E — statsmodels not installed
+\newcommand{\ResNbRho}{n/d}
 % QP3 quadrant: high engagement, low adoption
-\newcommand{\ResQuadFalado}{Opik, Arize Phoenix e LangSmith}
+\newcommand{\ResQuadFalado}{Opik, Arize Phoenix e Langfuse}
 % QP3 quadrant: low engagement, high adoption
 \newcommand{\ResQuadAdotado}{promptfoo, garak e Inspect AI}
 % P3: Cliff's delta, agente x rag items (2025-2026)
 \newcommand{\ResPTresDelta}{0,01}
 % P3: OLS coefficient of agente (E ~ agente + log age + stratum)
-\newcommand{\ResPTresBeta}{0,025}
+\newcommand{\ResPTresBeta}{n/d}
 % P3: 95% CI lower (HC3)
-\newcommand{\ResPTresLo}{0,005}
+\newcommand{\ResPTresLo}{n/d}
 % P3: 95% CI upper (HC3)
-\newcommand{\ResPTresHi}{0,046}
+\newcommand{\ResPTresHi}{n/d}
 % P3: p-value
-\newcommand{\ResPTresP}{0,016}
+\newcommand{\ResPTresP}{n/d}
 % P3: items (agente + rag)
 \newcommand{\ResPTresN}{2.253}
 % P3 verdict
-\newcommand{\ResPTresVeredito}{sustenta P3}
+\newcommand{\ResPTresVeredito}{n/d}
 % pain: bug issues of the tools' own repositories
 \newcommand{\ResDorIssues}{2.518}
 % pain: tools with bug issues

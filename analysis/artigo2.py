@@ -509,17 +509,9 @@ class Catalog:
     self_repos: dict[str, set[str]]
     method_rungs: dict[str, str]
     method_names: dict[str, str]
-    self_orgs: dict[str, set[str]] = field(default_factory=dict)
 
     def is_self(self, unit_id: str, tool: str) -> bool:
-        """Return whether a unit belongs to the tool's repository or maintainer organization."""
-        unit_lower = unit_id.lower()
-        if unit_lower in self.self_repos.get(tool, set()):
-            return True
-        if "/" in unit_lower:
-            owner = unit_lower.split("/", 1)[0]
-            return owner in self.self_orgs.get(tool, set())
-        return False
+        return unit_id.lower() in self.self_repos.get(tool, set())
 
     def display(self, entry: str) -> str:
         return latex_escape(
@@ -535,9 +527,6 @@ def catalog(gz: Gazetteer) -> Catalog:
         test_tools=[t.id for t in gz.tools if t.family != FAMILY_SUT],
         frameworks=[t.id for t in gz.tools if t.family == FAMILY_SUT],
         self_repos={t.id: {r.lower() for r in t.repos} for t in gz.tools},
-        self_orgs={
-            t.id: {r.lower().split("/", 1)[0] for r in t.repos if "/" in r} for t in gz.tools
-        },
         method_rungs={m.id: m.oracle for m in gz.methods if m.oracle},
         method_names={m.id: m.name for m in gz.methods},
     )

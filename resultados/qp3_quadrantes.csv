@@ -5,8 +5,8 @@ deepeval,0.5027,10,alto E / alta adoção
 garak,0.4282,12,baixo E / alta adoção
 giskard,0.4455,3,baixo E / baixa adoção
 inspect-ai,0.4818,9,baixo E / alta adoção
-langfuse,0.5406,4,alto E / alta adoção
-langsmith,0.5228,3,alto E / baixa adoção
+langfuse,0.5406,4,alto E / baixa adoção
+langsmith,0.5228,5,alto E / alta adoção
 lm-eval-harness,0.5384,5,alto E / alta adoção
 nemo-guardrails,0.4212,1,baixo E / baixa adoção
 openai-evals,0.483,1,baixo E / baixa adoção

@@ -699,20 +699,3 @@ def test_statistics_helpers() -> None:
     assert kw["groups"] == 3 and len(kw["pairs"]) == 3
     assert all(p["p_holm"] >= p["p"] for p in kw["pairs"])
     assert artigo2.join_pt(["A", "B", "C"]) == "A, B e C"
-
-
-def test_maintainer_org_siblings_are_counted_as_self(tmp_path: Path) -> None:
-    items, dets = _corpus()
-    sibling = _item(
-        "r-org-sib",
-        "github",
-        ItemKind.REPO,
-        "https://github.com/explodinggradients/ragas-validators",
-        stars=10,
-    )
-    items.append(sibling)
-    dets.append(_det(sibling, "ragas", "N3"))
-    _, _, out = _run(tmp_path, "org-self", items=items, dets=dets)
-    rows = {r["tool"]: r for r in _rows(out / "qp1_piramide.csv")}
-    assert rows["ragas"]["self"] == "2"
-    assert rows["ragas"]["n3_ext"] == "1"
